@@ -14,7 +14,7 @@ Use these Maven entry points:
 - `mvn -q -DskipTests package` compile and package
 - `mvn test` run unit tests
 - `mvn verify` run unit + integration tests and formatting check
-- `mvn spotless:apply` format code (runs google-java-format)
+- `mvn spotless:apply` format code
 - `mvn -DskipTests exec:java` run a local runner or benchmark (after adding the exec plugin)
 
 ## Coding Style & Naming Conventions

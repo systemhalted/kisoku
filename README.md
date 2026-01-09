@@ -15,10 +15,11 @@ evaluation, and provides deterministic results for single and bulk inputs.
 CSV uses two header rows:
 1) Column names (ALL CAPS).
 2) Operators for each column (ALL CAPS), fixed per column.
+Data rows contain only operands (no operator prefixes).
 
 Column conventions:
-- Inputs: `IN_` prefix
-- Outputs: `OUT_` prefix
+- Inputs: any column whose operator is not `SET`
+- Outputs: columns whose operator is `SET`
 - Test-only: `TEST_` prefix (stripped in production artifacts)
 - Reserved: `RULE_ID`, `PRIORITY` (default priority column, configurable)
 
@@ -29,7 +30,7 @@ Cell encoding:
 
 Example:
 ```text
-RULE_ID,PRIORITY,IN_AGE,IN_REGION,OUT_DISCOUNT
+RULE_ID,PRIORITY,AGE,REGION,DISCOUNT
 RULE_ID,PRIORITY,BETWEEN,IN,SET
 R1,10,(18,29),(APAC,EMEA),0.05
 R2,20,,(APAC,EMEA),0.10
@@ -59,6 +60,6 @@ ValidationResult validation = Kisoku.validator().validate(source);
 CompiledRuleset compiled = Kisoku.compiler()
     .compile(source, CompileOptions.production().withRuleSelection(RuleSelectionPolicy.AUTO));
 try (LoadedRuleset ruleset = Kisoku.loader().load(compiled, LoadOptions.memoryMap())) {
-  DecisionOutput output = ruleset.evaluate(DecisionInput.of(Map.of("IN_AGE", 25)));
+  DecisionOutput output = ruleset.evaluate(DecisionInput.of(Map.of("AGE", 25)));
 }
 ```

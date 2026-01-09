@@ -8,36 +8,24 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 
-/**
- * Generates CSV decision table fixtures for functional and scale tests.
- */
+/** Generates CSV decision table fixtures for functional and scale tests. */
 public final class DecisionTableFixtures {
   private DecisionTableFixtures() {}
 
   public static Path writePriorityTable(Path dir) throws IOException {
     List<String> header =
-        List.of(
-            "RULE_ID",
-            "PRIORITY",
-            "IN_AGE",
-            "IN_REGION",
-            "IN_PLAN",
-            "OUT_DISCOUNT",
-            "OUT_TIER",
-            "TEST_EXPECTED_SEGMENT");
-    List<String> operators =
-        List.of("RULE_ID", "PRIORITY", "BETWEEN", "IN", "IN", "SET", "SET", "SET");
+        List.of("RULE_ID", "PRIORITY", "AGE", "REGION", "DISCOUNT", "TEST_EXPECTED_SEGMENT");
+    List<String> operators = List.of("RULE_ID", "PRIORITY", "BETWEEN", "IN", "SET", "SET");
     List<List<String>> rows =
         List.of(
-            List.of("R1", "10", "(18,29)", "(APAC,EMEA)", "", "0.05", "STANDARD", "SEG_A"),
-            List.of(
-                "R2", "20", "(18,29)", "(APAC,EMEA)", "(PREMIUM)", "0.10", "PREFERRED", "SEG_B"),
-            List.of("R3", "5", "", "(APAC,EMEA)", "", "0.02", "BASE", "SEG_C"));
+            List.of("R1", "10", "(18,29)", "(APAC)", "0.05", "SEG_A"),
+            List.of("R2", "20", "(18,29)", "(EMEA)", "0.10", "SEG_B"),
+            List.of("R3", "5", "", "(APAC,EMEA)", "0.02", "SEG_C"));
     return writeCsv(dir, "priority.csv", header, operators, rows);
   }
 
   public static Path writeFirstMatchTable(Path dir) throws IOException {
-    List<String> header = List.of("RULE_ID", "IN_AGE", "IN_REGION", "OUT_DISCOUNT");
+    List<String> header = List.of("RULE_ID", "AGE", "REGION", "DISCOUNT");
     List<String> operators = List.of("RULE_ID", "BETWEEN", "IN", "SET");
     List<List<String>> rows =
         List.of(
@@ -53,10 +41,10 @@ public final class DecisionTableFixtures {
     header.add("RULE_ID");
     header.add("PRIORITY");
     for (int i = 1; i <= inputColumns; i++) {
-      header.add(String.format("IN_%03d", i));
+      header.add(String.format("FIELD_%03d", i));
     }
     for (int i = 1; i <= outputColumns; i++) {
-      header.add(String.format("OUT_%03d", i));
+      header.add(String.format("RESULT_%03d", i));
     }
 
     List<String> operators = new ArrayList<>();
@@ -101,7 +89,7 @@ public final class DecisionTableFixtures {
         }
         for (int col = 1; col <= outputColumns; col++) {
           line.append(',')
-              .append("OUT_")
+              .append("RESULT_")
               .append(String.format("%03d", col))
               .append('_')
               .append(row % 10);

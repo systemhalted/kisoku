@@ -25,9 +25,7 @@ import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-/**
- * Functional tests for bulk evaluation ordering and isolation.
- */
+/** Functional tests for bulk evaluation ordering and isolation. */
 class DecisionTableBulkEvaluationTest {
   private final RulesetValidator validator = Kisoku.validator();
   private final RulesetCompiler compiler = Kisoku.compiler();
@@ -37,7 +35,7 @@ class DecisionTableBulkEvaluationTest {
   void evaluatesBulkInputsInOrderWithIsolation(@TempDir Path tempDir) throws IOException {
     Path csv = DecisionTableFixtures.writePriorityTable(tempDir);
     ValidationResult validation = validator.validate(DecisionTableSources.csv(csv));
-    assertTrue(validation.isOk());
+    assertTrue(validation.ok());
 
     CompiledRuleset compiled =
         compiler.compile(
@@ -45,12 +43,12 @@ class DecisionTableBulkEvaluationTest {
             CompileOptions.production().withRuleSelection(RuleSelectionPolicy.AUTO));
 
     try (LoadedRuleset ruleset = loader.load(compiled, LoadOptions.memoryMap())) {
-      DecisionInput base = DecisionInput.of(Map.of("IN_REGION", "APAC"));
+      DecisionInput base = DecisionInput.of(Map.of("REGION", "APAC"));
       List<DecisionInput> variants =
           List.of(
-              DecisionInput.of(Map.of("IN_AGE", 25, "IN_PLAN", "PREMIUM")),
-              DecisionInput.of(Map.of("IN_AGE", 25, "IN_PLAN", "BASIC")),
-              DecisionInput.of(Map.of("IN_AGE", 40, "IN_PLAN", "BASIC")));
+              DecisionInput.of(Map.of("AGE", 25)),
+              DecisionInput.of(Map.of("AGE", 25, "REGION", "EMEA")),
+              DecisionInput.of(Map.of("AGE", 40)));
 
       BulkResult result = ruleset.evaluateBulk(base, variants);
       assertEquals(3, result.results().size());
@@ -59,8 +57,8 @@ class DecisionTableBulkEvaluationTest {
       DecisionOutput second = result.results().get(1);
       DecisionOutput third = result.results().get(2);
 
-      assertEquals("R2", first.ruleId());
-      assertEquals("R1", second.ruleId());
+      assertEquals("R1", first.ruleId());
+      assertEquals("R2", second.ruleId());
       assertEquals("R3", third.ruleId());
     }
   }

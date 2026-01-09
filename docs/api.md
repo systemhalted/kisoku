@@ -78,8 +78,8 @@ public final class BulkResult {
 ## Column Naming Conventions
 - Reserved identifiers are ALL CAPS.
 - Reserved columns include `RULE_ID` and `PRIORITY` (configurable via `CompileOptions`).
-- Input columns are prefixed with `IN_`.
-- Output columns are prefixed with `OUT_`.
+- Column roles are defined by the operator row: `SET` marks outputs, all other
+  operators are inputs.
 - Test-only columns are prefixed with `TEST_` and removed from production artifacts.
 
 ## CSV Header Rows
@@ -92,7 +92,7 @@ public final class BulkResult {
 
 Example CSV:
 ```text
-RULE_ID,PRIORITY,IN_AGE,IN_REGION,OUT_DISCOUNT
+RULE_ID,PRIORITY,AGE,REGION,DISCOUNT
 RULE_ID,PRIORITY,BETWEEN,IN,SET
 R1,10,(18,29),(APAC,EMEA),0.05
 R2,20,,(APAC,EMEA),0.10
@@ -142,7 +142,7 @@ CompiledRuleset compiled = compiler.compile(
     source,
     CompileOptions.production().withRuleSelection(RuleSelectionPolicy.AUTO));
 try (LoadedRuleset ruleset = loader.load(compiled, LoadOptions.memoryMap())) {
-  DecisionInput input = DecisionInput.of(Map.of("age", 42, "region", "APAC"));
+  DecisionInput input = DecisionInput.of(Map.of("AGE", 42, "REGION", "APAC"));
   DecisionOutput output = ruleset.evaluate(input);
 }
 ```

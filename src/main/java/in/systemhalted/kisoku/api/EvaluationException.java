@@ -1,8 +1,6 @@
 package in.systemhalted.kisoku.api;
 
-/**
- * Signals a failure during ruleset evaluation.
- */
+/** Signals a failure during ruleset evaluation. */
 public class EvaluationException extends RuntimeException {
   public EvaluationException(String message) {
     super(message);

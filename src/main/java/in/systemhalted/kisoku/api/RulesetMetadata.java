@@ -3,9 +3,7 @@ package in.systemhalted.kisoku.api;
 import java.util.List;
 import java.util.Optional;
 
-/**
- * Metadata describing a compiled or loaded ruleset.
- */
+/** Metadata describing a compiled or loaded ruleset. */
 public final class RulesetMetadata {
   private final long rowCount;
   private final List<String> inputColumns;

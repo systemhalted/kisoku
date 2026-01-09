@@ -5,9 +5,7 @@ import in.systemhalted.kisoku.api.LoadOptions;
 import in.systemhalted.kisoku.api.LoadedRuleset;
 import in.systemhalted.kisoku.api.RulesetLoader;
 
-/**
- * Placeholder loader that throws until a real implementation is provided.
- */
+/** Placeholder loader that throws until a real implementation is provided. */
 public final class UnsupportedRulesetLoader implements RulesetLoader {
   @Override
   public LoadedRuleset load(CompiledRuleset compiled, LoadOptions options) {

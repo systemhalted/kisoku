@@ -1,8 +1,6 @@
 package in.systemhalted.kisoku.api;
 
-/**
- * Options that control how compiled artifacts are loaded.
- */
+/** Options that control how compiled artifacts are loaded. */
 public final class LoadOptions {
   private final boolean memoryMap;
   private final boolean prewarmIndexes;

@@ -4,9 +4,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 
-/**
- * A typed input payload for ruleset evaluation.
- */
+/** A typed input payload for ruleset evaluation. */
 public final class DecisionInput {
   private final Map<String, Object> values;
 
