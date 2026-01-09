@@ -2,9 +2,7 @@ package in.systemhalted.kisoku.api;
 
 import java.util.List;
 
-/**
- * Represents the outcome of validating a decision table.
- */
+/** Represents the outcome of validating a decision table. */
 public final class ValidationResult {
   private final boolean ok;
   private final List<String> issues;

@@ -19,9 +19,7 @@ import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-/**
- * Scale test that generates a typical PRD-sized decision table.
- */
+/** Scale test that generates a typical PRD-sized decision table. */
 class DecisionTableScaleTest {
   private static final long TYPICAL_ROWS = 5_000_000L;
   private static final int TYPICAL_INPUT_COLUMNS = 60;

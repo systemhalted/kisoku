@@ -7,9 +7,7 @@ import in.systemhalted.kisoku.runtime.UnsupportedRulesetCompiler;
 import in.systemhalted.kisoku.runtime.UnsupportedRulesetLoader;
 import in.systemhalted.kisoku.runtime.UnsupportedRulesetValidator;
 
-/**
- * Library entry point providing access to validator, compiler, and loader instances.
- */
+/** Library entry point providing access to validator, compiler, and loader instances. */
 public final class Kisoku {
   private Kisoku() {}
 

@@ -17,8 +17,9 @@ under 1 GB with bounded per-evaluation working set.
 - Rule rows expressed as normalized conditions + outputs.
 - Explicit row ordering to support deterministic selection rules.
 - Reserved column names and keywords defined by the library are ALL CAPS.
-- Column roles are determined by prefixes: `IN_` for inputs, `OUT_` for outputs,
-  and `TEST_` for test-only columns.
+- Column roles are determined by the operator row: `SET` marks outputs, all
+  other operators are inputs.
+- Test-only columns are prefixed with `TEST_`.
 - Reserved columns include `RULE_ID` and `PRIORITY` (default priority column).
 - CSV sources use two header rows: names, then operators (fixed per column).
 

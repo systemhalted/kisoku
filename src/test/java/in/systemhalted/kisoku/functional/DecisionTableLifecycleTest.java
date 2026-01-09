@@ -24,9 +24,7 @@ import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-/**
- * Functional tests for lifecycle behavior and rule selection.
- */
+/** Functional tests for lifecycle behavior and rule selection. */
 class DecisionTableLifecycleTest {
   private final RulesetValidator validator = Kisoku.validator();
   private final RulesetCompiler compiler = Kisoku.compiler();
@@ -36,7 +34,7 @@ class DecisionTableLifecycleTest {
   void selectsHighestPriorityWhenPresent(@TempDir Path tempDir) throws IOException {
     Path csv = DecisionTableFixtures.writePriorityTable(tempDir);
     ValidationResult validation = validator.validate(DecisionTableSources.csv(csv));
-    assertTrue(validation.isOk());
+    assertTrue(validation.ok());
 
     CompiledRuleset compiled =
         compiler.compile(
@@ -44,12 +42,10 @@ class DecisionTableLifecycleTest {
             CompileOptions.production().withRuleSelection(RuleSelectionPolicy.AUTO));
 
     try (LoadedRuleset ruleset = loader.load(compiled, LoadOptions.memoryMap())) {
-      DecisionInput input =
-          DecisionInput.of(Map.of("IN_AGE", 25, "IN_REGION", "APAC", "IN_PLAN", "PREMIUM"));
+      DecisionInput input = DecisionInput.of(Map.of("AGE", 25, "REGION", "EMEA"));
       DecisionOutput output = ruleset.evaluate(input);
       assertEquals("R2", output.ruleId());
-      assertEquals("0.10", output.outputs().get("OUT_DISCOUNT"));
-      assertEquals("PREFERRED", output.outputs().get("OUT_TIER"));
+      assertEquals("0.10", output.outputs().get("DISCOUNT"));
     }
   }
 
@@ -57,7 +53,7 @@ class DecisionTableLifecycleTest {
   void fallsBackToFirstMatchWhenPriorityMissing(@TempDir Path tempDir) throws IOException {
     Path csv = DecisionTableFixtures.writeFirstMatchTable(tempDir);
     ValidationResult validation = validator.validate(DecisionTableSources.csv(csv));
-    assertTrue(validation.isOk());
+    assertTrue(validation.ok());
 
     CompiledRuleset compiled =
         compiler.compile(
@@ -65,10 +61,10 @@ class DecisionTableLifecycleTest {
             CompileOptions.production().withRuleSelection(RuleSelectionPolicy.AUTO));
 
     try (LoadedRuleset ruleset = loader.load(compiled, LoadOptions.onHeap())) {
-      DecisionInput input = DecisionInput.of(Map.of("IN_AGE", 25, "IN_REGION", "APAC"));
+      DecisionInput input = DecisionInput.of(Map.of("AGE", 25, "REGION", "APAC"));
       DecisionOutput output = ruleset.evaluate(input);
       assertEquals("R1", output.ruleId());
-      assertEquals("0.05", output.outputs().get("OUT_DISCOUNT"));
+      assertEquals("0.05", output.outputs().get("DISCOUNT"));
     }
   }
 
@@ -82,11 +78,10 @@ class DecisionTableLifecycleTest {
             CompileOptions.production().withRuleSelection(RuleSelectionPolicy.FIRST_MATCH));
 
     try (LoadedRuleset ruleset = loader.load(compiled, LoadOptions.onHeap())) {
-      DecisionInput input =
-          DecisionInput.of(Map.of("IN_AGE", 25, "IN_REGION", "APAC", "IN_PLAN", "PREMIUM"));
+      DecisionInput input = DecisionInput.of(Map.of("AGE", 25, "REGION", "APAC"));
       DecisionOutput output = ruleset.evaluate(input);
       assertEquals("R1", output.ruleId());
-      assertEquals("0.05", output.outputs().get("OUT_DISCOUNT"));
+      assertEquals("0.05", output.outputs().get("DISCOUNT"));
     }
   }
 
