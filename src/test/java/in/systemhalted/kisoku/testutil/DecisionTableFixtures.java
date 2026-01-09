@@ -8,6 +8,9 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 
+/**
+ * Generates CSV decision table fixtures for functional and scale tests.
+ */
 public final class DecisionTableFixtures {
   private DecisionTableFixtures() {}
 

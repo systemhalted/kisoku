@@ -4,6 +4,9 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 
+/**
+ * Result of evaluating a decision table against a single input.
+ */
 public final class DecisionOutput {
   private final String ruleId;
   private final Map<String, Object> outputs;

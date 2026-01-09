@@ -2,6 +2,9 @@ package in.systemhalted.kisoku.api;
 
 import java.util.List;
 
+/**
+ * Holds ordered results for bulk evaluation.
+ */
 public final class BulkResult {
   private final List<DecisionOutput> results;
 
