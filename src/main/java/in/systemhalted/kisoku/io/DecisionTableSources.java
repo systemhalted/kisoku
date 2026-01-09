@@ -8,6 +8,9 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Objects;
 
+/**
+ * Factory helpers for creating decision table sources.
+ */
 public final class DecisionTableSources {
   private DecisionTableSources() {}
 
@@ -15,6 +18,9 @@ public final class DecisionTableSources {
     return new PathDecisionTableSource(path, TableFormat.CSV);
   }
 
+  /**
+   * File-based decision table source.
+   */
   private static final class PathDecisionTableSource implements DecisionTableSource {
     private final Path path;
     private final TableFormat format;

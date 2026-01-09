@@ -2,6 +2,9 @@ package in.systemhalted.kisoku.api;
 
 import java.util.Objects;
 
+/**
+ * Options that control compilation behavior and artifact output.
+ */
 public final class CompileOptions {
   private final ArtifactKind artifactKind;
   private final RuleSelectionPolicy ruleSelectionPolicy;

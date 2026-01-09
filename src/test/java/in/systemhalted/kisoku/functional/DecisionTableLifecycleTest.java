@@ -24,6 +24,9 @@ import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+/**
+ * Functional tests for lifecycle behavior and rule selection.
+ */
 class DecisionTableLifecycleTest {
   private final RulesetValidator validator = Kisoku.validator();
   private final RulesetCompiler compiler = Kisoku.compiler();
