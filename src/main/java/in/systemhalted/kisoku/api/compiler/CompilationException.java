@@ -1,4 +1,4 @@
-package in.systemhalted.kisoku.api;
+package in.systemhalted.kisoku.api.compiler;
 
 /** Signals a failure during ruleset compilation. */
 public class CompilationException extends RuntimeException {

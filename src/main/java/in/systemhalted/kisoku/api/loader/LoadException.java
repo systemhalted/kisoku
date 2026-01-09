@@ -1,4 +1,4 @@
-package in.systemhalted.kisoku.api;
+package in.systemhalted.kisoku.api.loader;
 
 /** Signals a failure while loading a compiled ruleset. */
 public class LoadException extends RuntimeException {

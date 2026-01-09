@@ -1,7 +1,7 @@
 package in.systemhalted.kisoku.io;
 
-import in.systemhalted.kisoku.api.DecisionTableSource;
-import in.systemhalted.kisoku.api.TableFormat;
+import in.systemhalted.kisoku.api.model.DecisionTableSource;
+import in.systemhalted.kisoku.api.model.TableFormat;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;

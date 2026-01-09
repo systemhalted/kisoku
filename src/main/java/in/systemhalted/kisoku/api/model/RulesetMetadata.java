@@ -1,4 +1,4 @@
-package in.systemhalted.kisoku.api;
+package in.systemhalted.kisoku.api.model;
 
 import java.util.List;
 import java.util.Optional;

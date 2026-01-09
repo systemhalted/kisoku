@@ -1,4 +1,4 @@
-package in.systemhalted.kisoku.api;
+package in.systemhalted.kisoku.api.model;
 
 /** Supported decision table source formats. */
 public enum TableFormat {

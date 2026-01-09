@@ -1,5 +1,9 @@
-package in.systemhalted.kisoku.api;
+package in.systemhalted.kisoku.api.loader;
 
+import in.systemhalted.kisoku.api.evaluation.BulkResult;
+import in.systemhalted.kisoku.api.evaluation.DecisionInput;
+import in.systemhalted.kisoku.api.evaluation.DecisionOutput;
+import in.systemhalted.kisoku.api.model.RulesetMetadata;
 import java.util.List;
 
 /** Immutable ruleset instance ready for evaluation. */
