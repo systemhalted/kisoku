@@ -1,4 +1,4 @@
-package in.systemhalted.kisoku.api;
+package in.systemhalted.kisoku.api.validator;
 
 /** Signals a validation failure when parsing or checking a decision table. */
 public class ValidationException extends RuntimeException {

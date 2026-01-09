@@ -1,5 +1,7 @@
-package in.systemhalted.kisoku.api;
+package in.systemhalted.kisoku.api.compiler;
 
+import in.systemhalted.kisoku.api.evaluation.RuleSelectionPolicy;
+import in.systemhalted.kisoku.api.model.ArtifactKind;
 import java.util.Objects;
 
 /** Options that control compilation behavior and artifact output. */

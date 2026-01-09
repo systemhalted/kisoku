@@ -1,4 +1,6 @@
-package in.systemhalted.kisoku.api;
+package in.systemhalted.kisoku.api.validator;
+
+import in.systemhalted.kisoku.api.model.DecisionTableSource;
 
 /** Validates decision table schema and semantics before compilation. */
 public interface RulesetValidator {

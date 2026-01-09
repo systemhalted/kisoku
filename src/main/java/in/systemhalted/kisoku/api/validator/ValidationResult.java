@@ -1,4 +1,4 @@
-package in.systemhalted.kisoku.api;
+package in.systemhalted.kisoku.api.validator;
 
 import java.util.List;
 

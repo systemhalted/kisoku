@@ -1,4 +1,4 @@
-package in.systemhalted.kisoku.api;
+package in.systemhalted.kisoku.api.loader;
 
 /** Options that control how compiled artifacts are loaded. */
 public final class LoadOptions {

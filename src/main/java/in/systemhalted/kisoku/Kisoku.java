@@ -1,8 +1,8 @@
 package in.systemhalted.kisoku;
 
-import in.systemhalted.kisoku.api.RulesetCompiler;
-import in.systemhalted.kisoku.api.RulesetLoader;
-import in.systemhalted.kisoku.api.RulesetValidator;
+import in.systemhalted.kisoku.api.compiler.RulesetCompiler;
+import in.systemhalted.kisoku.api.loader.RulesetLoader;
+import in.systemhalted.kisoku.api.validator.RulesetValidator;
 import in.systemhalted.kisoku.runtime.UnsupportedRulesetCompiler;
 import in.systemhalted.kisoku.runtime.UnsupportedRulesetLoader;
 import in.systemhalted.kisoku.runtime.UnsupportedRulesetValidator;
