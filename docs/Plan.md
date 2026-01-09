@@ -1,10 +1,10 @@
 # Plan of Execution
 
 ## Purpose
-Implement a Java library for the decision-table rule engine described in `PRD.md`, with explicit lifecycle stages, deterministic runtime behavior, and scale/performance targets.
+Implement a Java library for the decision-table rule engine described in `docs/PRD.md`, with explicit lifecycle stages, deterministic runtime behavior, and scale/performance targets.
 
 ## Scope Summary
-- Support decision tables from CSV, JSON, and database sources.
+- Support decision tables from CSV in phase 1; JSON and database sources follow later.
 - Compile rules into an execution-optimized representation with dual artifacts (test-inclusive and production).
 - Load compiled rulesets into an immutable, shareable runtime form with indexed evaluation.
 - Provide single and bulk evaluation modes with strict isolation and determinism.

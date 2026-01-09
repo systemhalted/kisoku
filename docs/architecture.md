@@ -17,6 +17,10 @@ under 1 GB with bounded per-evaluation working set.
 - Rule rows expressed as normalized conditions + outputs.
 - Explicit row ordering to support deterministic selection rules.
 - Reserved column names and keywords defined by the library are ALL CAPS.
+- Column roles are determined by prefixes: `IN_` for inputs, `OUT_` for outputs,
+  and `TEST_` for test-only columns.
+- Reserved columns include `RULE_ID` and `PRIORITY` (default priority column).
+- CSV sources use two header rows: names, then operators (fixed per column).
 
 ## Compilation
 - Normalize values to typed forms and encode strings via dictionaries.
@@ -24,6 +28,8 @@ under 1 GB with bounded per-evaluation working set.
 - Produce two artifacts: one includes test-only columns; the production artifact
   removes them and reindexes outputs accordingly.
 - Persist a stable, versioned binary layout with checksums.
+- Parse operator values in cells: `BETWEEN`/`NOT BETWEEN` use `(min,max)`,
+  `IN`/`NOT IN` use `(A,B,C)`, and blank cells mean no condition.
 
 ## Artifact Layout (Conceptual)
 - Header: magic, format version, artifact kind, schema hash, byte order.

@@ -1,7 +1,7 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-See `PRD.md` for requirements and keep it in sync with changes. For a Java + Maven layout, use:
+See `docs/PRD.md` for requirements and keep it in sync with changes. For a Java + Maven layout, use:
 - `src/main/java/` engine/runtime code
 - `src/test/java/` unit/integration tests
 - `src/test/resources/` fixtures and datasets
@@ -29,11 +29,12 @@ Use JUnit 5 with Maven Surefire and Failsafe.
 - Name unit tests `*Test` under `src/test/java/`; integration tests `*IT` under `src/test/java/`.
 - Keep fixtures in `src/test/resources/` and use small representative decision tables.
 - Separate performance/scale tests from unit tests and mark them clearly.
+- Scale tests are tagged `scale` and gated by `-Dkisoku.runScaleTests=true`.
 - Keep tests deterministic; avoid time- or randomness-dependent assertions.
 
 ## Commit & Pull Request Guidelines
 There is no git history in this workspace, so no established convention. Use Conventional Commits (e.g., `feat:`, `fix:`, `perf:`).
-- PRs should link relevant requirements in `PRD.md` and summarize behavior changes.
+- PRs should link relevant requirements in `docs/PRD.md` and summarize behavior changes.
 - Include test evidence and benchmark results when touching compilation, indexing, or evaluation paths.
 - Keep PRs small and update this file when adding new commands or structure.
 

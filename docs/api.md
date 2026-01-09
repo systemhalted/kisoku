@@ -7,12 +7,13 @@
 
 ## Non-Goals
 - No network service or database client; DB integration is via user-provided sources.
+- JSON/Database loaders are not implemented yet (CSV only for now).
 
 ## Package Layout
 - `in.systemhalted.kisoku.api` public-facing types and lifecycle interfaces.
 - `in.systemhalted.kisoku.compiler` compilation and artifact serialization.
 - `in.systemhalted.kisoku.runtime` loader and evaluator implementations.
-- `in.systemhalted.kisoku.io` CSV/JSON readers and source adapters.
+- `in.systemhalted.kisoku.io` CSV readers and source adapters.
 
 ## Lifecycle Overview
 1) `validate(source)` -> `ValidationResult`
@@ -74,6 +75,34 @@ public final class BulkResult {
 }
 ```
 
+## Column Naming Conventions
+- Reserved identifiers are ALL CAPS.
+- Reserved columns include `RULE_ID` and `PRIORITY` (configurable via `CompileOptions`).
+- Input columns are prefixed with `IN_`.
+- Output columns are prefixed with `OUT_`.
+- Test-only columns are prefixed with `TEST_` and removed from production artifacts.
+
+## CSV Header Rows
+- CSV uses two header rows: the first row defines column names, the second row
+  defines operators for each column.
+- Operators are fixed per column and must be ALL CAPS.
+- For `RULE_ID` and `PRIORITY`, repeat the column name in the operator row.
+- Output columns use `SET` as the operator (for now).
+- Blank cells in data rows mean "no condition" for that column.
+
+Example CSV:
+```text
+RULE_ID,PRIORITY,IN_AGE,IN_REGION,OUT_DISCOUNT
+RULE_ID,PRIORITY,BETWEEN,IN,SET
+R1,10,(18,29),(APAC,EMEA),0.05
+R2,20,,(APAC,EMEA),0.10
+```
+
+## Cell Value Encoding
+- `BETWEEN` and `NOT BETWEEN` values use `(min,max)`.
+- `IN` and `NOT IN` values use `(A,B,C)` (comma-separated).
+- Empty cells mean no condition.
+
 ## Options and Configuration
 - `CompileOptions` includes `artifactKind` (TEST_INCLUSIVE, PRODUCTION), rule selection,
   and indexing profile hints.
@@ -100,6 +129,10 @@ public final class BulkResult {
 ## Example Usage (Sketch)
 ```java
 DecisionTableSource source = DecisionTableSources.csv(Path.of("examples/pricing.csv"));
+RulesetValidator validator = Kisoku.validator();
+RulesetCompiler compiler = Kisoku.compiler();
+RulesetLoader loader = Kisoku.loader();
+
 ValidationResult validation = validator.validate(source);
 if (!validation.ok()) {
   throw new ValidationException(validation.issues());
