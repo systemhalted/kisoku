@@ -8,17 +8,17 @@ import in.systemhalted.kisoku.runtime.UnsupportedRulesetLoader;
 import in.systemhalted.kisoku.runtime.UnsupportedRulesetValidator;
 
 public final class Kisoku {
-    private Kisoku() {}
+  private Kisoku() {}
 
-    public static RulesetValidator validator() {
-        return new UnsupportedRulesetValidator();
-    }
+  public static RulesetValidator validator() {
+    return new UnsupportedRulesetValidator();
+  }
 
-    public static RulesetCompiler compiler() {
-        return new UnsupportedRulesetCompiler();
-    }
+  public static RulesetCompiler compiler() {
+    return new UnsupportedRulesetCompiler();
+  }
 
-    public static RulesetLoader loader() {
-        return new UnsupportedRulesetLoader();
-    }
+  public static RulesetLoader loader() {
+    return new UnsupportedRulesetLoader();
+  }
 }
