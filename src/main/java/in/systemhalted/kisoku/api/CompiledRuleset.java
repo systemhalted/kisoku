@@ -1,9 +1,9 @@
 package in.systemhalted.kisoku.api;
 
 public interface CompiledRuleset {
-    ArtifactKind kind();
+  ArtifactKind kind();
 
-    RulesetMetadata metadata();
+  RulesetMetadata metadata();
 
-    byte[] bytes();
+  byte[] bytes();
 }

@@ -4,9 +4,9 @@ import java.io.IOException;
 import java.io.InputStream;
 
 public interface DecisionTableSource {
-    String name();
+  String name();
 
-    TableFormat format();
+  TableFormat format();
 
-    InputStream openStream() throws IOException;
+  InputStream openStream() throws IOException;
 }

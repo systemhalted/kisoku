@@ -6,8 +6,8 @@ import in.systemhalted.kisoku.api.LoadedRuleset;
 import in.systemhalted.kisoku.api.RulesetLoader;
 
 public final class UnsupportedRulesetLoader implements RulesetLoader {
-    @Override
-    public LoadedRuleset load(CompiledRuleset compiled, LoadOptions options) {
-        throw new UnsupportedOperationException("Ruleset loading is not implemented yet.");
-    }
+  @Override
+  public LoadedRuleset load(CompiledRuleset compiled, LoadOptions options) {
+    throw new UnsupportedOperationException("Ruleset loading is not implemented yet.");
+  }
 }
