@@ -1,4 +1,4 @@
-package in.systemhalted.kisoku.runtime;
+package in.systemhalted.kisoku.runtime.exception;
 
 import in.systemhalted.kisoku.api.model.DecisionTableSource;
 import in.systemhalted.kisoku.api.validator.RulesetValidator;

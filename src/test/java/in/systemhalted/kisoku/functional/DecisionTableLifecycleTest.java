@@ -34,7 +34,7 @@ class DecisionTableLifecycleTest {
   void selectsHighestPriorityWhenPresent(@TempDir Path tempDir) throws IOException {
     Path csv = DecisionTableFixtures.writePriorityTable(tempDir);
     ValidationResult validation = validator.validate(DecisionTableSources.csv(csv));
-    assertTrue(validation.ok());
+    assertTrue(validation.isOk());
 
     CompiledRuleset compiled =
         compiler.compile(
@@ -53,7 +53,7 @@ class DecisionTableLifecycleTest {
   void fallsBackToFirstMatchWhenPriorityMissing(@TempDir Path tempDir) throws IOException {
     Path csv = DecisionTableFixtures.writeFirstMatchTable(tempDir);
     ValidationResult validation = validator.validate(DecisionTableSources.csv(csv));
-    assertTrue(validation.ok());
+    assertTrue(validation.isOk());
 
     CompiledRuleset compiled =
         compiler.compile(

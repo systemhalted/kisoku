@@ -11,7 +11,7 @@
 
 ## Package Layout
 - `in.systemhalted.kisoku.api` public-facing types and lifecycle interfaces.
-- `in.systemhalted.kisoku.compiler` compilation and artifact serialization.
+- `in.systemhalted.kisoku.api.compiler` compilation and artifact serialization.
 - `in.systemhalted.kisoku.runtime` loader and evaluator implementations.
 - `in.systemhalted.kisoku.io` CSV readers and source adapters.
 
@@ -93,15 +93,57 @@ public final class BulkResult {
 Example CSV:
 ```text
 RULE_ID,PRIORITY,AGE,REGION,DISCOUNT
-RULE_ID,PRIORITY,BETWEEN,IN,SET
+RULE_ID,PRIORITY,BETWEEN_INCLUSIVE,IN,SET
 R1,10,(18,29),(APAC,EMEA),0.05
 R2,20,,(APAC,EMEA),0.10
 ```
 
+## Operator Set
+Operator row tokens (ALL CAPS):
+- `RULE_ID`, `PRIORITY`, `SET`
+- `EQ`, `NE`, `GT`, `GTE`, `LT`, `LTE`
+- `BETWEEN_INCLUSIVE`, `BETWEEN_EXCLUSIVE`
+- `NOT_BETWEEN_INCLUSIVE`, `NOT_BETWEEN_EXCLUSIVE`
+- `IN`, `NOT IN`
+
+Accepted operator aliases in the operator row:
+- `=` → `EQ`
+- `!=` → `NE`
+- `>` → `GT`
+- `>=` → `GTE`
+- `<` → `LT`
+- `<=` → `LTE`
+- `BETWEEN` → `BETWEEN_INCLUSIVE`
+- `NOT BETWEEN` → `NOT_BETWEEN_INCLUSIVE`
+
 ## Cell Value Encoding
-- `BETWEEN` and `NOT BETWEEN` values use `(min,max)`.
+- `BETWEEN_*` and `NOT_BETWEEN_*` values use `(min,max)`.
 - `IN` and `NOT IN` values use `(A,B,C)` (comma-separated).
 - Empty cells mean no condition.
+- Values are trimmed (whitespace is ignored around tokens).
+- Operands may contain commas and are not quoted; parsing splits on commas only
+  when not inside parentheses.
+
+## Type Map
+- Clients must supply a type map for all input and output columns (including `TEST_` columns).
+- Type map is required at compile time and may be validated at load time.
+- `RULE_ID` and `PRIORITY` have fixed types (string and int).
+- String comparisons are case-sensitive by default; override via `CompileOptions`.
+
+Supported types:
+- `STRING`, `BOOLEAN`, `CHARACTER`
+- `INT`, `LONG`, `DOUBLE`, `DECIMAL`
+- `DATE` (ISO-8601 date)
+- `TIMESTAMP` (ISO-8601 local date-time)
+- `TIMESTAMP_TZ` (ISO-8601 with timezone offset or `Z`)
+- `CHARACTER` values must be length 1.
+
+## Operator Storage (Conceptual)
+- `RULE_ID`: stored per row, typically dictionary-encoded.
+- `PRIORITY`: required per row when the column exists. Can be overridden by CompileOptions.
+- `BETWEEN_*`/`NOT_BETWEEN_*`: store `min` and `max` values plus a presence flag.
+- `IN`/`NOT IN`: store a value list and a presence flag.
+- `SET`: outputs may be blank, but each row must have at least one output value.
 
 ## Options and Configuration
 - `CompileOptions` includes `artifactKind` (TEST_INCLUSIVE, PRODUCTION), rule selection,
@@ -134,7 +176,7 @@ RulesetCompiler compiler = Kisoku.compiler();
 RulesetLoader loader = Kisoku.loader();
 
 ValidationResult validation = validator.validate(source);
-if (!validation.ok()) {
+if (!validation.isOk()) {
   throw new ValidationException(validation.issues());
 }
 
@@ -151,4 +193,4 @@ try (LoadedRuleset ruleset = loader.load(compiled, LoadOptions.memoryMap())) {
 - Keep `LoadedRuleset` instances long-lived and share across threads.
 - Use production artifacts for runtime; keep test-inclusive artifacts for validation only.
 - Bulk evaluation applies base inputs first, then overlays variant inputs.
-- Keywords in expressions are ALL CAPS (e.g., `BETWEEN`, `IN`, `NOT IN`, `NOT BETWEEN`).
+- Keywords in expressions are ALL CAPS (e.g., `BETWEEN_INCLUSIVE`, `IN`, `NOT IN`).
