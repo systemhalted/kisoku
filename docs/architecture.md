@@ -12,6 +12,14 @@ under 1 GB with bounded per-evaluation working set.
 3) Loader -> LoadedRuleset (immutable)
 4) Evaluator -> Single or Bulk results
 
+## CSV Parsing (Streaming)
+- CSV is streamed and never fully loaded into memory.
+- Cells can contain commas inside parentheses, so parsing must split on commas
+  only when not inside parentheses.
+- Values are trimmed before parsing and comparison.
+- Empty cells are preserved; blank means "no condition" for inputs.
+- Reject rows with unbalanced parentheses and report row/column context.
+
 ## Canonical Model
 - Column definitions: inputs, outputs, metadata, and test-only columns.
 - Rule rows expressed as normalized conditions + outputs.
@@ -20,8 +28,15 @@ under 1 GB with bounded per-evaluation working set.
 - Column roles are determined by the operator row: `SET` marks outputs, all
   other operators are inputs.
 - Test-only columns are prefixed with `TEST_`.
-- Reserved columns include `RULE_ID` and `PRIORITY` (default priority column).
+- Reserved columns include `RULE_ID` and `PRIORITY` (default priority column, configurable via `CompileOptions`).
 - CSV sources use two header rows: names, then operators (fixed per column).
+
+## ColumnSpec (Conceptual)
+- `name`: column name from header row.
+- `operator`: operator token from the operator row.
+- `isOutput`: true when operator is `SET`.
+- `isTest`: true when name starts with `TEST_`.
+- `index`: column position in the row array.
 
 ## Compilation
 - Normalize values to typed forms and encode strings via dictionaries.
@@ -29,8 +44,21 @@ under 1 GB with bounded per-evaluation working set.
 - Produce two artifacts: one includes test-only columns; the production artifact
   removes them and reindexes outputs accordingly.
 - Persist a stable, versioned binary layout with checksums.
-- Parse operator values in cells: `BETWEEN`/`NOT BETWEEN` use `(min,max)`,
+- Parse operator values in cells: `BETWEEN_*`/`NOT_BETWEEN_*` use `(min,max)`,
   `IN`/`NOT IN` use `(A,B,C)`, and blank cells mean no condition.
+- Normalize operator aliases (e.g., `>=` -> `GTE`, `BETWEEN` -> `BETWEEN_INCLUSIVE`) during compilation.
+- `PRIORITY` values are required when the column exists.
+- Output (`SET`) cells may be blank, but at least one output must be non-blank per row.
+- Compile against the client-provided type map (inputs and outputs).
+- Enforce type-specific constraints (e.g., `CHARACTER` length = 1).
+
+## Operator Storage (Conceptual)
+- `RULE_ID`: dictionary id or string offsets per row.
+- `PRIORITY`: `int[]` per row.
+- `BETWEEN_*`/`NOT_BETWEEN_*`: `minId[]`, `maxId[]`, `hasCondition` bitset.
+- `IN`/`NOT IN`: `listOffsets[]`, `listLengths[]`, `listValueIds[]`,
+  `hasCondition` bitset.
+- `SET` outputs: `valueId[]`, `hasValue` bitset.
 
 ## Artifact Layout (Conceptual)
 - Header: magic, format version, artifact kind, schema hash, byte order.
@@ -39,6 +67,15 @@ under 1 GB with bounded per-evaluation working set.
 - Rule order: deterministic evaluation order.
 - Index sections: equality and range indexes per column.
 - Optional diagnostics section for test artifacts.
+
+## Compiler Streaming Checklist
+- Read and validate header row + operator row.
+- Build `ColumnSpec` list once and reuse it for row processing.
+- Stream rows:
+  - Validate per-row constraints (RULE_ID, PRIORITY, output presence).
+  - Encode operands to dictionaries and append to column blocks.
+- Flush column blocks and dictionaries to the artifact.
+- Emit test-inclusive and production artifacts with consistent schema hashes.
 
 ## Loading Strategy
 - Load artifacts into read-only buffers; prefer memory mapping for large tables.

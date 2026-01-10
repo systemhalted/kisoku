@@ -13,11 +13,13 @@ Implement a Java library for the decision-table rule engine described in `docs/P
 
 ## Execution Plan
 1) **Clarify semantics and inputs**
-   - Define supported column types, operators, and null/missing value behavior.
+   - Define supported column types, operator tokens (including aliases), and null/missing value behavior.
    - Specify rule priority/selection (e.g., first-match ordering) and tie-breaking rules.
    - Define test-only markers and validation errors for invalid tables.
    - Specify input merge rules for base + variant in bulk evaluation.
    - Document output contract (required vs optional outputs, defaults, error handling).
+   - Define trimming and case-sensitivity rules.
+   - Define the type map contract for inputs and outputs (including `DATE`/`TIMESTAMP` variants).
 
 2) **Define library API and architecture**
    - Public API packages: `api`, `compiler`, `runtime`, `io`.
@@ -32,24 +34,32 @@ Implement a Java library for the decision-table rule engine described in `docs/P
    - Specify serialized layout for compiled rulesets (versioned header + sections).
    - Decide compile-time vs load-time index construction and caching.
 
-4) **Implement parsers, compiler, and loader**
-   - CSV and JSON loaders; DB source adapter interface (user-provided implementation).
-   - Build a canonical in-memory model and validation pipeline.
+4) **Implement streaming CSV parser and validator**
+   - Build a custom CSV reader that splits on commas outside parentheses.
+   - Validate header row, operator row, and column metadata in a single pass.
+   - Enforce `PRIORITY` required when the column exists.
+   - Enforce output rules: `SET` columns allowed to be blank but at least one output per row.
+   - Collect validation issues with row/column context and cap error counts.
+
+5) **Implement compiler and loader**
+   - Stream CSV rows into columnar blocks without per-row heap objects.
+   - Define `ColumnSpec` and operator-specific storage (IN/NOT IN lists, BETWEEN ranges, SET outputs).
    - Compile dual artifacts (test-inclusive and production) and serialize to bytes/files.
    - Implement loader for immutable runtime state, with memory mapping if needed.
+   - Build or hydrate indexes at load time if not persisted.
 
-5) **Implement runtime evaluation**
+6) **Implement runtime evaluation**
    - Indexed candidate selection and condition evaluation in deterministic order.
    - Single evaluation API returning outputs + match metadata.
    - Bulk evaluation API with per-variant isolation and shared base input.
    - Thread-safe, lock-free reading on loaded rulesets.
 
-6) **Library packaging and documentation**
+7) **Library packaging and documentation**
    - Maven `jar` packaging, semantic versioning, minimal dependencies.
    - Javadoc for public APIs and examples of CSV/JSON sources.
    - README usage snippets and sample decision tables under `examples/`.
 
-7) **Testing and performance validation**
+8) **Testing and performance validation**
    - Unit tests for parsing, validation, compilation, indexing, and semantics.
    - Integration tests for lifecycle and dual artifact correctness.
    - Determinism tests under concurrency; bulk isolation tests.
@@ -57,8 +67,8 @@ Implement a Java library for the decision-table rule engine described in `docs/P
 
 ## Milestones
 - M1: Specified rule semantics + public API draft.
-- M2: Canonical model + compiler + serialized artifact format.
-- M3: Loader + immutable runtime + indexed evaluation.
-- M4: Bulk evaluation + concurrency safety + deterministic outputs.
+- M2: Streaming CSV parser + validator + column specs.
+- M3: Compiler + serialized artifact format + loader.
+- M4: Indexed evaluation + bulk mode + deterministic outputs.
 - M5: Benchmarks + memory/latency tuning to PRD targets.
 - M6: Library docs + examples packaged.

@@ -21,17 +21,17 @@ Column conventions:
 - Inputs: any column whose operator is not `SET`
 - Outputs: columns whose operator is `SET`
 - Test-only: `TEST_` prefix (stripped in production artifacts)
-- Reserved: `RULE_ID`, `PRIORITY` (default priority column, configurable)
+- Reserved: `RULE_ID`, `PRIORITY` (default priority column, configurable via `CompileOptions`)
 
 Cell encoding:
-- `BETWEEN` / `NOT BETWEEN`: `(min,max)`
+- `BETWEEN_*` / `NOT_BETWEEN_*`: `(min,max)`
 - `IN` / `NOT IN`: `(A,B,C)`
 - Blank cell means "no condition"
 
 Example:
 ```text
 RULE_ID,PRIORITY,AGE,REGION,DISCOUNT
-RULE_ID,PRIORITY,BETWEEN,IN,SET
+RULE_ID,PRIORITY,BETWEEN_INCLUSIVE,IN,SET
 R1,10,(18,29),(APAC,EMEA),0.05
 R2,20,,(APAC,EMEA),0.10
 ```
