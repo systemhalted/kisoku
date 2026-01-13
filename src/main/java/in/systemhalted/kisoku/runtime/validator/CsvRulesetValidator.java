@@ -6,6 +6,7 @@ import in.systemhalted.kisoku.api.validator.RulesetValidator;
 import in.systemhalted.kisoku.api.validator.ValidationResult;
 import in.systemhalted.kisoku.runtime.csv.CsvRowReader;
 import in.systemhalted.kisoku.runtime.csv.StreamingCsvRowReader;
+import in.systemhalted.kisoku.runtime.operator.Operator;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
@@ -16,31 +17,7 @@ import java.util.List;
  * <p>TODO: implement header validation, per-row validation, and operator parsing.
  */
 public final class CsvRulesetValidator implements RulesetValidator {
-  private static final List<String> SUPPORTED_OPERATORS =
-      List.of(
-          "RULE_ID",
-          "PRIORITY",
-          "SET",
-          "EQ",
-          "NE",
-          "GT",
-          "GTE",
-          "LT",
-          "LTE",
-          "BETWEEN_INCLUSIVE",
-          "BETWEEN_EXCLUSIVE",
-          "NOT_BETWEEN_INCLUSIVE",
-          "NOT_BETWEEN_EXCLUSIVE",
-          "IN",
-          "NOT IN",
-          "=",
-          "!=",
-          ">",
-          ">=",
-          "<",
-          "<=",
-          "BETWEEN",
-          "NOT BETWEEN");
+  // TODO: use Operator.fromToken(...) to validate and normalize operator row tokens.
 
   @Override
   public ValidationResult validate(DecisionTableSource source) {
