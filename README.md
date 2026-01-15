@@ -1,4 +1,5 @@
 # Kisoku
+*Under development* 
 
 Kisoku (pronounced "ki-so-ku") is a Java decision-table rule engine. The name
 comes from the Japanese term for "rule" or "regulation." The library compiles
