@@ -90,7 +90,7 @@ class DecisionTableLifecycleTest {
   }
 
   @Test
-  void stripsTestOnlyColumnsInProductionArtifacts(@TempDir Path tempDir) throws IOException {
+  void includesTestColumnsInAllArtifacts(@TempDir Path tempDir) throws IOException {
     Path csv = DecisionTableFixtures.writePriorityTable(tempDir);
     Schema schema = DecisionTableFixtures.priorityTableSchema();
 
@@ -100,10 +100,11 @@ class DecisionTableLifecycleTest {
             CompileOptions.testInclusive(schema).withRuleSelection(RuleSelectionPolicy.AUTO));
     assertTrue(testArtifact.metadata().outputColumns().contains("TEST_EXPECTED_SEGMENT"));
 
+    // TEST_ columns are included in production artifacts (flagged for evaluation-time control)
     CompiledRuleset prodArtifact =
         compiler.compile(
             DecisionTableSources.csv(csv),
             CompileOptions.production(schema).withRuleSelection(RuleSelectionPolicy.AUTO));
-    assertFalse(prodArtifact.metadata().outputColumns().contains("TEST_EXPECTED_SEGMENT"));
+    assertTrue(prodArtifact.metadata().outputColumns().contains("TEST_EXPECTED_SEGMENT"));
   }
 }

@@ -41,8 +41,8 @@ under 1 GB with bounded per-evaluation working set.
 ## Compilation
 - Normalize values to typed forms and encode strings via dictionaries.
 - Build per-column metadata (types, ranges, nullability, test flags).
-- Produce two artifacts: one includes test-only columns; the production artifact
-  removes them and reindexes outputs accordingly.
+- Produce two artifacts: both include test-only columns marked with flag `0x02`.
+  The loader/evaluator can optionally exclude them at evaluation time.
 - Persist a stable, versioned binary layout with checksums.
 - Parse operator values in cells: `BETWEEN_*`/`NOT_BETWEEN_*` use `(min,max)`,
   `IN`/`NOT IN` use `(A,B,C)`, and blank cells mean no condition.
