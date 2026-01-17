@@ -68,10 +68,24 @@ Implement a Java library for the decision-table rule engine described in `docs/P
 ## Milestones
 - [x] M1: Specified rule semantics + public API draft.
 - [x] M2: Streaming CSV parser + validator + column specs.
-- [ ] M3: Compiler + serialized artifact format + loader.
+- [x] M3: Compiler + serialized artifact format + loader + evaluation.
   - [x] Compiler implemented (`CsvRulesetCompiler`)
   - [x] Binary artifact format implemented per `docs/artifact-format.md`
-  - [ ] Loader not yet implemented
-- [ ] M4: Indexed evaluation + bulk mode + deterministic outputs.
-- [ ] M5: Benchmarks + memory/latency tuning to PRD targets.
+  - [x] Loader implemented (`CsvRulesetLoader`, `BinaryArtifactReader`)
+  - [x] Single and bulk evaluation implemented (`LoadedRulesetImpl`)
+  - [x] Type coercion and operator matching implemented
+- [ ] M4: Indexed evaluation + true memory-mapping.
+  - [ ] Build equality indexes for EQ/IN/NE/NOT_IN columns
+  - [ ] Build range indexes for GT/GTE/LT/LTE/BETWEEN columns
+  - [ ] Implement `FileChannel.map()` for file-backed artifacts
+  - [ ] Lazy-load column sections on demand
+  - **Status**: Current evaluation uses O(n) linear scan; must index for PRD targets
+- [ ] M5: Memory test suite + heap budget verification.
+  - [x] `MemoryTestUtils` and `MemorySnapshot` utilities
+  - [x] Heap budget tests (`HeapBudgetMemoryTest`)
+  - [x] Per-evaluation memory tests (`PerEvaluationMemoryTest`)
+  - [x] Bulk evaluation memory tests (`BulkEvaluationMemoryTest`)
+  - [x] Concurrent evaluation tests (`ConcurrentEvaluationMemoryTest`)
+  - [x] Off-heap verification tests (`OffHeapMemoryTest`)
+  - [ ] Benchmarks for p95 latency targets
 - [ ] M6: Library docs + examples packaged.

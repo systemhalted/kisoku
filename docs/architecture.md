@@ -78,24 +78,60 @@ under 1 GB with bounded per-evaluation working set.
 - Emit test-inclusive and production artifacts with consistent schema hashes.
 
 ## Loading Strategy
-- Load artifacts into read-only buffers; prefer memory mapping for large tables.
+
+### Current Behavior (M3)
+- Artifacts loaded via `BinaryArtifactReader` into `ByteBuffer.allocateDirect()`.
+- Column data decoded into heap arrays (`int[]`, `short[]`, etc.).
+- `LoadedRuleset` is immutable and thread-safe for concurrent evaluation.
+- `close()` releases direct buffer references.
+
+### Planned Enhancement (M4)
+- Use `FileChannel.map()` for true file-backed memory mapping.
+- Lazy-load column sections on demand (only decode accessed columns).
+- Keep column data off-heap for large tables to meet <1GB heap budget.
 - Build or hydrate indexes at load time if not fully persisted.
-- Expose a `LoadedRuleset` that is immutable and shareable across threads.
-- Provide `close()` to release mapped resources.
 
 ## Indexing Strategy
-- Equality index: value -> bitset or row list for discrete columns.
-- Range index: sorted arrays + binary search for numeric comparisons.
-- Candidate selection: intersect indexed candidates; fallback to scan only when
-  index coverage is insufficient.
-- Deterministic rule selection using fixed row order or explicit priority.
+
+> **Status: NOT IMPLEMENTED (Target: M4)**
+>
+> Current evaluation uses O(n) linear scan over all rows. This section describes
+> the planned indexing approach required to meet PRD performance targets.
+
+### Planned Design (M4)
+- **Equality index**: value → bitset or row list for EQ/IN/NE/NOT_IN columns.
+- **Range index**: sorted arrays + binary search for GT/GTE/LT/LTE/BETWEEN columns.
+- **Candidate selection**: intersect indexed candidates via bitset operations;
+  fallback to scan only when index coverage is insufficient.
+- **Deterministic rule selection**: using fixed row order or explicit PRIORITY.
+
+### Current Behavior (M3)
+```java
+// LoadedRulesetImpl.evaluate() - O(n) scan
+for (int rowIndex : ruleOrder) {
+  if (matchesAllInputs(rowIndex, input)) {
+    return buildOutput(rowIndex);
+  }
+}
+```
+
+### Performance Impact
+- At 5M rows, linear scan cannot meet PRD p95 < 250ms target.
+- Indexing should reduce candidate set to O(1) or O(log n) for indexed columns.
 
 ## Evaluation Path
+
+### Current Behavior (M3 - Implemented)
 - Normalize inputs once and reuse in both single and bulk modes.
 - Apply base input, then overlay variant inputs per evaluation.
-- Evaluate candidate rows in deterministic order. If a priority column exists,
-  select by priority first; otherwise apply first-match row order.
-- Return outputs plus optional diagnostics (rule id, matched conditions).
+- **Linear scan** over all rows in deterministic order (priority or first-match).
+- Type coercion via `TypeCoercion` class handles input value conversions.
+- Return `DecisionOutput` with `ruleId()` and `outputs()` map.
+
+### Planned Enhancement (M4)
+- Use indexes to narrow candidate set before evaluation.
+- Evaluate only candidate rows via bitset intersection.
+- Return outputs plus optional diagnostics (matched conditions, index stats).
 
 ## Concurrency and Isolation
 - Loaded rulesets are immutable; no shared mutable state during evaluation.
