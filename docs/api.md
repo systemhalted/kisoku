@@ -10,10 +10,12 @@
 - JSON/Database loaders are not implemented yet (CSV only for now).
 
 ## Package Layout
-- `in.systemhalted.kisoku.api` public-facing types and lifecycle interfaces.
-- `in.systemhalted.kisoku.api.compiler` compilation and artifact serialization.
-- `in.systemhalted.kisoku.runtime` loader and evaluator implementations.
-- `in.systemhalted.kisoku.io` CSV readers and source adapters.
+- `in.systemhalted.kisoku.api` - core types (Schema, DecisionInput/Output, Kisoku facade).
+- `in.systemhalted.kisoku.api.validation` - validator interfaces and ValidationResult.
+- `in.systemhalted.kisoku.api.compilation` - compiler interfaces and CompiledRuleset.
+- `in.systemhalted.kisoku.api.loading` - loader interfaces and LoadedRuleset.
+- `in.systemhalted.kisoku.api.evaluation` - evaluation types and RuleSelectionPolicy.
+- `in.systemhalted.kisoku.runtime.*` - implementation (not exported, discovered via ServiceLoader).
 
 ## Lifecycle Overview
 1) `validate(source, schema)` -> `ValidationResult`
@@ -23,8 +25,7 @@
 
 ## Public Interfaces (Sketch)
 ```java
-package in.systemhalted.kisoku.api;
-
+// Core types in in.systemhalted.kisoku.api
 public interface DecisionTableSource {
   String name();
   TableFormat format(); // CSV, JSON, DATABASE
@@ -35,14 +36,17 @@ public enum TableFormat {
   CSV, JSON, DATABASE
 }
 
+// in.systemhalted.kisoku.api.validation
 public interface RulesetValidator {
   ValidationResult validate(DecisionTableSource source, Schema schema);
 }
 
+// in.systemhalted.kisoku.api.compilation
 public interface RulesetCompiler {
   CompiledRuleset compile(DecisionTableSource source, CompileOptions options);
 }
 
+// in.systemhalted.kisoku.api.loading
 public interface RulesetLoader {
   LoadedRuleset load(CompiledRuleset compiled, LoadOptions options);
 }

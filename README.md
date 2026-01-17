@@ -8,7 +8,9 @@ evaluation, and provides deterministic results for single and bulk inputs.
 
 ## Status
 - CSV sources only (JSON/Database loaders will be added later).
-- API and functional tests are in place; implementation is in progress.
+- **Validator**: Implemented - validates CSV structure, operators, and schema.
+- **Compiler**: Implemented - compiles CSV to binary artifact format.
+- **Loader**: Not yet implemented - loads compiled artifacts for evaluation.
 - See `docs/PRD.md` for requirements and constraints.
 - Not ready for prime time yet.
 
