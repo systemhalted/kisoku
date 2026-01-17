@@ -66,9 +66,12 @@ Implement a Java library for the decision-table rule engine described in `docs/P
    - Benchmarks for p95 latency, bulk throughput, and heap usage.
 
 ## Milestones
-- M1: Specified rule semantics + public API draft.
-- M2: Streaming CSV parser + validator + column specs.
-- M3: Compiler + serialized artifact format + loader.
-- M4: Indexed evaluation + bulk mode + deterministic outputs.
-- M5: Benchmarks + memory/latency tuning to PRD targets.
-- M6: Library docs + examples packaged.
+- [x] M1: Specified rule semantics + public API draft.
+- [x] M2: Streaming CSV parser + validator + column specs.
+- [ ] M3: Compiler + serialized artifact format + loader.
+  - [x] Compiler implemented (`CsvRulesetCompiler`)
+  - [x] Binary artifact format implemented per `docs/artifact-format.md`
+  - [ ] Loader not yet implemented
+- [ ] M4: Indexed evaluation + bulk mode + deterministic outputs.
+- [ ] M5: Benchmarks + memory/latency tuning to PRD targets.
+- [ ] M6: Library docs + examples packaged.
