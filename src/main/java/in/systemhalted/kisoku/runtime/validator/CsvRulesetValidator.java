@@ -36,8 +36,16 @@ public final class CsvRulesetValidator implements RulesetValidator {
     // 4) at least one output value per row
     // 5) error collection with row/column context
     try (CsvRowReader reader = new StreamingCsvRowReader(source.openStream())) {
-      // TODO: read rows and populate issues list.
-    } catch (IOException exception) {
+      // TODO: read header row and operator row.
+      String[] headerRow = readRow(reader, issues, "Missing header row.");
+      String[] operatorRow = readRow(reader, issues, "Missing operator row.");
+
+      if (headerRow != null && operatorRow != null) {
+        normalizeOperators(operatorRow, issues, reader.rowNumber());
+      }
+
+      // TODO: read data rows and apply per-row validation.
+    } catch (IOException | RuntimeException exception) {
       issues.add("Failed to read CSV source: " + exception.getMessage());
     }
 
@@ -47,5 +55,31 @@ public final class CsvRulesetValidator implements RulesetValidator {
     }
 
     return ValidationResult.withIssues(issues);
+  }
+
+  private String[] readRow(CsvRowReader reader, List<String> issues, String missingMessage)
+      throws IOException {
+    String[] row = reader.readNext();
+    if (row == null) {
+      issues.add(missingMessage);
+    }
+    return row;
+  }
+
+  private Operator[] normalizeOperators(String[] operatorRow, List<String> issues, long rowNumber) {
+    Operator[] operators = new Operator[operatorRow.length];
+    for (int i = 0; i < operatorRow.length; i++) {
+      String raw = operatorRow[i];
+      if (raw == null || raw.trim().isEmpty()) {
+        issues.add("Row " + rowNumber + " has an empty operator at column " + (i + 1));
+        continue;
+      }
+      try {
+        operators[i] = Operator.fromToken(raw);
+      } catch (IllegalArgumentException exception) {
+        issues.add("Row " + rowNumber + " has unsupported operator: " + raw);
+      }
+    }
+    return operators;
   }
 }
