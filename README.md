@@ -12,6 +12,10 @@ evaluation, and provides deterministic results for single and bulk inputs.
 - See `docs/PRD.md` for requirements and constraints.
 - Not ready for prime time yet.
 
+## Module Structure
+- **kisoku-api** - Public API contracts (interfaces, models, exceptions). Consumers depend on this.
+- **kisoku-runtime** - Implementation (validator, compiler, loader). No exports - discovered via ServiceLoader.
+
 ## Decision Table Format (CSV)
 CSV uses two header rows:
 1) Column names (ALL CAPS).
@@ -56,6 +60,12 @@ mvn -Dkisoku.runScaleTests=true -Dkisoku.scaleRows=5000000 test
 
 ## Library Usage (Sketch)
 ```java
+import in.systemhalted.kisoku.api.*;
+import in.systemhalted.kisoku.api.validation.*;
+import in.systemhalted.kisoku.api.compilation.*;
+import in.systemhalted.kisoku.api.loading.*;
+import in.systemhalted.kisoku.api.evaluation.*;
+
 // Define schema for non-reserved columns
 Schema schema = Schema.builder()
     .column("AGE", ColumnType.INTEGER)

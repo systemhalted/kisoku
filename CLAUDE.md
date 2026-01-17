@@ -48,12 +48,29 @@ Schema schema = Schema.builder()
 - Supported types: `STRING`, `INTEGER`, `DECIMAL`, `BOOLEAN`, `DATE`, `TIMESTAMP`
 - Reserved columns (`RULE_ID`, `PRIORITY`) don't need declaration
 
-### Package Structure
+### Module Structure
 
-- `in.systemhalted.kisoku` - Entry point (`Kisoku.java`) with factory methods
-- `in.systemhalted.kisoku.api.*` - Public API contracts (interfaces, models, exceptions)
-- `in.systemhalted.kisoku.runtime.*` - Implementation (compiler, loader, evaluator, CSV parsing)
-- `in.systemhalted.kisoku.io` - Source I/O helpers
+Two Java modules with JPMS for proper encapsulation:
+
+**kisoku-api** (open module - exports all packages):
+- `in.systemhalted.kisoku.api` - Entry point and shared types
+  - `Kisoku.java` - Entry point using ServiceLoader
+  - `Schema`, `ColumnType`, `ColumnSchema` - Schema definitions
+  - `DecisionTableSource`, `DecisionTableSources` - Source abstraction
+- `in.systemhalted.kisoku.api.validation` - Validation phase
+  - `RulesetValidator`, `ValidationResult`, `ValidationException`
+- `in.systemhalted.kisoku.api.compilation` - Compilation phase
+  - `RulesetCompiler`, `CompileOptions`, `CompiledRuleset`, `CompilationException`
+- `in.systemhalted.kisoku.api.loading` - Loading phase
+  - `RulesetLoader`, `LoadOptions`, `LoadedRuleset`, `LoadException`
+- `in.systemhalted.kisoku.api.evaluation` - Evaluation types
+  - `DecisionInput`, `DecisionOutput`, `BulkResult`, `RuleSelectionPolicy`
+
+**kisoku-runtime** (closed module - no exports):
+- `in.systemhalted.kisoku.runtime.csv` - CSV parsing and validation
+- `in.systemhalted.kisoku.runtime.compiler` - Compilation (stub)
+- `in.systemhalted.kisoku.runtime.loader` - Loading (stub)
+- Implementations discovered via ServiceLoader
 
 ### Key Interfaces
 
