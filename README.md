@@ -27,7 +27,7 @@ Data rows contain only operands (no operator prefixes).
 Column conventions:
 - Inputs: any column whose operator is not `SET`
 - Outputs: columns whose operator is `SET`
-- Test-only: `TEST_` prefix (stripped in production artifacts)
+- Test-only: `TEST_` prefix (included in all artifacts with flag `0x02`, can be excluded at evaluation time)
 - Reserved: `RULE_ID`, `PRIORITY` (default priority column, configurable via `CompileOptions`)
 
 Cell encoding:

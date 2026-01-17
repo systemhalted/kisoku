@@ -140,11 +140,8 @@ public final class CsvRulesetCompiler implements RulesetCompiler {
       String name = headerRow[i];
       Operator operator = operators[i];
 
-      // Skip TEST_ columns for production artifacts
+      // Mark TEST_ columns but include in all artifacts (flagged for evaluation-time control)
       boolean isTestColumn = name.startsWith("TEST_");
-      if (isTestColumn && artifactKind == ArtifactKind.PRODUCTION) {
-        continue;
-      }
 
       ColumnType type = resolveColumnType(name, operator, schema);
       int role = resolveColumnRole(operator);
