@@ -81,8 +81,26 @@ Each column definition (variable size):
 | 1 | operator | Operator enum ordinal |
 | 1 | column_type | Type enum ordinal |
 | 1 | column_role | 0 = INPUT, 1 = OUTPUT, 2 = METADATA |
-| 1 | flags | Bit flags (0x01 = nullable, 0x02 = test-only) |
+| 1 | flags | Bit flags (see below) |
 | 4 | data_offset | Byte offset within rule data section |
+
+### Column Flags
+
+Flags use powers of 2 so they can be combined with bitwise OR:
+
+| Bit | Value | Flag | Description |
+|-----|-------|------|-------------|
+| 0 | 0x01 | nullable | Column allows null/blank values |
+| 1 | 0x02 | test-only | Column is for testing (prefix `TEST_`); can be excluded at evaluation time |
+| 2-7 | - | reserved | Reserved for future use |
+
+Examples:
+- `0x00` - required column, not test-only
+- `0x01` - nullable column
+- `0x02` - test-only column (required)
+- `0x03` - nullable + test-only (`0x01 | 0x02`)
+
+Test-only columns are included in all artifacts (both PRODUCTION and TEST_INCLUSIVE). The loader/evaluator can optionally exclude them at evaluation time based on `LoadOptions`.
 
 ### Operator Ordinals
 

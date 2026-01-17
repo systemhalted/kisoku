@@ -104,7 +104,7 @@ public final class BulkResult {
 - Reserved columns include `RULE_ID` and `PRIORITY` (configurable via `CompileOptions`).
 - Column roles are defined by the operator row: `SET` marks outputs, all other
   operators are inputs.
-- Test-only columns are prefixed with `TEST_` and removed from production artifacts.
+- Test-only columns are prefixed with `TEST_` and included in all artifacts with flag `0x02` for evaluation-time control.
 
 ## CSV Header Rows
 - CSV uses two header rows: the first row defines column names, the second row

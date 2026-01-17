@@ -95,7 +95,7 @@ R1,10,(18,29),(APAC,EMEA),0.05
 **Column types**:
 - Inputs: operator ≠ `SET`
 - Outputs: operator = `SET`
-- Test-only: `TEST_*` prefix (stripped in PRODUCTION artifacts)
+- Test-only: `TEST_*` prefix (included in all artifacts with flag `0x02`, excluded at evaluation time)
 - Reserved: `RULE_ID`, `PRIORITY`
 
 **Operators**: `EQ` (=), `NE` (!=), `GT` (>), `GTE` (>=), `LT` (<), `LTE` (<=), `BETWEEN_INCLUSIVE`, `BETWEEN_EXCLUSIVE`, `NOT_BETWEEN_INCLUSIVE`, `NOT_BETWEEN_EXCLUSIVE`, `IN`, `NOT IN`, `SET`

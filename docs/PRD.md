@@ -4,8 +4,7 @@ Functional requirements
    The rule engine must support authoring and execution of rules using decision tables that define multiple input conditions and multiple output fields per rule. The rules may be written in CSV, JSON or Database
 
 2. Test cells and dual artifacts
-   Decision tables must support test-only cells or columns for validating additional input and output parameters. When test cells are present, the engine must produce and maintain two artifacts:
-   One test-inclusive version and one production version with all test-only cells removed. 
+   Decision tables must support test-only cells or columns for validating additional input and output parameters. When test cells are present, test-only columns are included in all artifacts with a flag (0x02) for evaluation-time control. The loader/evaluator can optionally exclude them, allowing users to run tests in production against real inputs. 
 
 3. Ruleset compilation to an execution-ready representation
    The rule engine must compile decision tables into a compact, execution-optimized representation. Runtime execution must operate on the compiled representation rather than interpreting the source format.
