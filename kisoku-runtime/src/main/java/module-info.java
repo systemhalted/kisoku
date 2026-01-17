@@ -10,7 +10,7 @@ module kisoku.runtime {
   provides in.systemhalted.kisoku.api.validation.RulesetValidator with
       in.systemhalted.kisoku.runtime.csv.CsvRulesetValidator;
   provides in.systemhalted.kisoku.api.compilation.RulesetCompiler with
-      in.systemhalted.kisoku.runtime.compiler.UnsupportedRulesetCompiler;
+      in.systemhalted.kisoku.runtime.compiler.CsvRulesetCompiler;
   provides in.systemhalted.kisoku.api.loading.RulesetLoader with
       in.systemhalted.kisoku.runtime.loader.UnsupportedRulesetLoader;
 }
