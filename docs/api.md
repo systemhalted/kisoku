@@ -220,6 +220,82 @@ try (LoadedRuleset ruleset = loader.load(compiled, LoadOptions.memoryMap())) {
 }
 ```
 
+## Type Coercion Rules
+
+The engine coerces input values to match stored column types at evaluation time:
+
+| Column Type | Input Type | Coercion Behavior |
+|-------------|------------|-------------------|
+| `STRING` | Any | `toString()` → dictionary lookup |
+| `INTEGER` | `Number` | `intValue()` extraction |
+| `DECIMAL` | `BigDecimal` | `toPlainString()` → dictionary lookup |
+| `DECIMAL` | Other | `toString()` → dictionary lookup |
+| `BOOLEAN` | `Boolean` | `true` → 1, `false` → 0 |
+| `DATE` | `LocalDate` | `toEpochDay()` as int |
+| `DATE` | `Integer` | Used directly as epoch day |
+| `TIMESTAMP` | `Instant` | `toString()` → dictionary lookup |
+| `TIMESTAMP` | Other | `toString()` → dictionary lookup |
+
+**Type mismatch behavior**: Throws `EvaluationException` if the input type cannot be coerced (e.g., passing a `String` where `INTEGER` is expected).
+
+## Null and Blank Value Handling
+
+| Context | Behavior |
+|---------|----------|
+| Input value is `null` | Treated as "no value"; matches blank cells (no condition) |
+| Input key missing | Treated as `null`; matches blank cells |
+| CSV cell is blank | No condition for that column; row matches any input value |
+| Output cell is blank | Output key omitted from `DecisionOutput.outputs()` |
+
+**Example**:
+```java
+// If REGION column has blank cell (no condition), this input matches
+DecisionInput.of(Map.of("AGE", 25))  // No REGION key = matches blank REGION cell
+```
+
+## Thread-Safety Guarantees
+
+| Component | Thread Safety | Usage Pattern |
+|-----------|---------------|---------------|
+| `LoadedRuleset` | **Thread-safe** | Share across threads; concurrent `evaluate()` calls are safe |
+| `DecisionInput` | **Immutable** | Safe to share and reuse |
+| `DecisionOutput` | **Immutable** | Safe to share and cache |
+| `BulkResult` | **Immutable** | Safe to share |
+| `CompiledRuleset` | **Thread-safe** | Can be loaded multiple times concurrently |
+
+**Concurrency model**: `LoadedRuleset` maintains no mutable state during evaluation. Per-evaluation data lives on the stack or in thread-local buffers, ensuring lock-free reading.
+
+## RuleSelectionPolicy Semantics
+
+| Policy | Behavior |
+|--------|----------|
+| `AUTO` | Uses `PRIORITY` column if present; otherwise first-match row order |
+| `PRIORITY` | Selects row with lowest priority value among matches |
+| `FIRST_MATCH` | Selects first matching row in CSV order (ignores PRIORITY) |
+
+**Priority ordering**: Lower numeric value = higher priority. If multiple rows have the same priority, first-match among them wins.
+
+## TEST_* Column Behavior
+
+Columns prefixed with `TEST_` are test-only columns with special handling:
+
+| Phase | Behavior |
+|-------|----------|
+| Validation | Validated like regular columns; must be in schema |
+| Compilation | Included in artifact with flag `0x02` |
+| Loading | Loaded into memory but marked as test columns |
+| Evaluation | **Excluded** from output; never returned in `DecisionOutput.outputs()` |
+
+**Use case**: Include expected values for validation testing without polluting production outputs.
+
+```csv
+RULE_ID,AGE,DISCOUNT,TEST_EXPECTED_SEGMENT
+RULE_ID,BETWEEN,SET,SET
+R1,(18,29),0.05,YOUTH
+```
+
+The `TEST_EXPECTED_SEGMENT` value can be compared against actual results in test code, but won't appear in production evaluation output.
+
 ## Notes for Library Consumers
 - Keep `LoadedRuleset` instances long-lived and share across threads.
 - Use production artifacts for runtime; keep test-inclusive artifacts for validation only.
