@@ -32,6 +32,15 @@ class StreamingCsvReaderTest {
   }
 
   @Test
+  void trimsCellsAndSkipsWhitespaceLines(@TempDir Path tempDir) throws IOException {
+    Path path = writeCsv(tempDir, "   ", " A , (B, C) ,  D  ");
+    try (StreamingCsvReader reader = new StreamingCsvReader(path)) {
+      assertArrayEquals(new String[] {"A", "(B, C)", "D"}, reader.readNext());
+      assertEquals(2, reader.rowNumber());
+    }
+  }
+
+  @Test
   void ignoresCommasInsideParentheses(@TempDir Path tempDir) throws IOException {
     Path path = writeCsv(tempDir, "A,(B,C),D");
     try (StreamingCsvReader reader = new StreamingCsvReader(path)) {

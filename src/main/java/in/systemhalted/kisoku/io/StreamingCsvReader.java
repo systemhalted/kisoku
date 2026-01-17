@@ -20,8 +20,8 @@ public final class StreamingCsvReader implements AutoCloseable {
     String line;
     while ((line = reader.readLine()) != null) {
       rowNumber++;
-      if (line.isEmpty()) {
-        // skip empty lines
+      if (line.trim().isEmpty()) {
+        // skip blank lines
         continue;
       }
 
@@ -41,7 +41,7 @@ public final class StreamingCsvReader implements AutoCloseable {
           }
           cell.append(ch);
         } else if (ch == ',' && depth == 0) {
-          cells.add(cell.toString());
+          cells.add(cell.toString().trim());
           cell.setLength(0);
         } else {
           cell.append(ch);
@@ -51,7 +51,7 @@ public final class StreamingCsvReader implements AutoCloseable {
       if (depth != 0) {
         throw new IOException("Unbalanced parentheses at row " + rowNumber);
       }
-      cells.add(cell.toString());
+      cells.add(cell.toString().trim());
 
       return cells.toArray(new String[0]);
     }
