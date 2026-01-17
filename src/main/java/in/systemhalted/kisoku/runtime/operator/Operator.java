@@ -5,9 +5,7 @@ import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
 
-/**
- * Internal operator definitions and alias normalization.
- */
+/** Internal operator definitions and alias normalization. */
 public enum Operator {
   RULE_ID,
   PRIORITY,

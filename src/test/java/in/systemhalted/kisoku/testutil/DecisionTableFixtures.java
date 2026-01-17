@@ -1,5 +1,7 @@
 package in.systemhalted.kisoku.testutil;
 
+import in.systemhalted.kisoku.api.model.ColumnType;
+import in.systemhalted.kisoku.api.model.Schema;
 import java.io.BufferedWriter;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -11,6 +13,37 @@ import java.util.List;
 /** Generates CSV decision table fixtures for functional and scale tests. */
 public final class DecisionTableFixtures {
   private DecisionTableFixtures() {}
+
+  /** Schema for the priority table fixture. */
+  public static Schema priorityTableSchema() {
+    return Schema.builder()
+        .column("AGE", ColumnType.INTEGER)
+        .column("REGION", ColumnType.STRING)
+        .column("DISCOUNT", ColumnType.DECIMAL)
+        .column("TEST_EXPECTED_SEGMENT", ColumnType.STRING)
+        .build();
+  }
+
+  /** Schema for the first-match table fixture. */
+  public static Schema firstMatchTableSchema() {
+    return Schema.builder()
+        .column("AGE", ColumnType.INTEGER)
+        .column("REGION", ColumnType.STRING)
+        .column("DISCOUNT", ColumnType.DECIMAL)
+        .build();
+  }
+
+  /** Schema for the large table fixture. */
+  public static Schema largeTableSchema(int inputColumns, int outputColumns) {
+    Schema.Builder builder = Schema.builder();
+    for (int i = 1; i <= inputColumns; i++) {
+      builder.column(String.format("FIELD_%03d", i), ColumnType.STRING);
+    }
+    for (int i = 1; i <= outputColumns; i++) {
+      builder.column(String.format("RESULT_%03d", i), ColumnType.STRING);
+    }
+    return builder.build();
+  }
 
   public static Path writePriorityTable(Path dir) throws IOException {
     List<String> header =

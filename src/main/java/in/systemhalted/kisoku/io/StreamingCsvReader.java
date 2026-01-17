@@ -1,69 +1,37 @@
 package in.systemhalted.kisoku.io;
 
-import java.io.BufferedReader;
+import in.systemhalted.kisoku.runtime.csv.CsvRowReader;
+import in.systemhalted.kisoku.runtime.csv.StreamingCsvRowReader;
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
+import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.ArrayList;
-import java.util.List;
 
+/**
+ * File-based CSV reader that delegates to {@link StreamingCsvRowReader}.
+ *
+ * <p>This class provides a convenient way to read CSV files from the filesystem while sharing the
+ * parsing logic with the stream-based reader.
+ */
 public final class StreamingCsvReader implements AutoCloseable {
-  private final BufferedReader reader;
-  private long rowNumber;
+  private final InputStream inputStream;
+  private final CsvRowReader delegate;
 
   public StreamingCsvReader(Path path) throws IOException {
-    this.reader = Files.newBufferedReader(path, StandardCharsets.UTF_8);
+    this.inputStream = Files.newInputStream(path);
+    this.delegate = new StreamingCsvRowReader(inputStream);
   }
 
   public String[] readNext() throws IOException {
-    String line;
-    while ((line = reader.readLine()) != null) {
-      rowNumber++;
-      if (line.trim().isEmpty()) {
-        // skip blank lines
-        continue;
-      }
-
-      List<String> cells = new ArrayList<>();
-      StringBuilder cell = new StringBuilder();
-      int depth = 0;
-
-      for (int i = 0; i < line.length(); i++) {
-        char ch = line.charAt(i);
-        if (ch == '(') {
-          depth++;
-          cell.append(ch);
-        } else if (ch == ')') {
-          depth--;
-          if (depth < 0) {
-            throw new IOException("Unbalanced parentheses at row " + rowNumber);
-          }
-          cell.append(ch);
-        } else if (ch == ',' && depth == 0) {
-          cells.add(cell.toString().trim());
-          cell.setLength(0);
-        } else {
-          cell.append(ch);
-        }
-      }
-
-      if (depth != 0) {
-        throw new IOException("Unbalanced parentheses at row " + rowNumber);
-      }
-      cells.add(cell.toString().trim());
-
-      return cells.toArray(new String[0]);
-    }
-    return null;
+    return delegate.readNext();
   }
 
   public long rowNumber() {
-    return rowNumber;
+    return delegate.rowNumber();
   }
 
   @Override
   public void close() throws IOException {
-    reader.close();
+    delegate.close();
   }
 }
