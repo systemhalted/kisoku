@@ -14,6 +14,7 @@ import in.systemhalted.kisoku.api.evaluation.RuleSelectionPolicy;
 import in.systemhalted.kisoku.api.loader.LoadOptions;
 import in.systemhalted.kisoku.api.loader.LoadedRuleset;
 import in.systemhalted.kisoku.api.loader.RulesetLoader;
+import in.systemhalted.kisoku.api.model.Schema;
 import in.systemhalted.kisoku.api.validator.RulesetValidator;
 import in.systemhalted.kisoku.api.validator.ValidationResult;
 import in.systemhalted.kisoku.io.DecisionTableSources;
@@ -34,13 +35,14 @@ class DecisionTableBulkEvaluationTest {
   @Test
   void evaluatesBulkInputsInOrderWithIsolation(@TempDir Path tempDir) throws IOException {
     Path csv = DecisionTableFixtures.writePriorityTable(tempDir);
-    ValidationResult validation = validator.validate(DecisionTableSources.csv(csv));
-    assertTrue(validation.isOk());
+    Schema schema = DecisionTableFixtures.priorityTableSchema();
+    ValidationResult validation = validator.validate(DecisionTableSources.csv(csv), schema);
+    assertTrue(validation.isOk(), () -> "Validation failed: " + validation.issues());
 
     CompiledRuleset compiled =
         compiler.compile(
             DecisionTableSources.csv(csv),
-            CompileOptions.production().withRuleSelection(RuleSelectionPolicy.AUTO));
+            CompileOptions.production(schema).withRuleSelection(RuleSelectionPolicy.AUTO));
 
     try (LoadedRuleset ruleset = loader.load(compiled, LoadOptions.memoryMap())) {
       DecisionInput base = DecisionInput.of(Map.of("REGION", "APAC"));

@@ -56,11 +56,24 @@ mvn -Dkisoku.runScaleTests=true -Dkisoku.scaleRows=5000000 test
 
 ## Library Usage (Sketch)
 ```java
+// Define schema for non-reserved columns
+Schema schema = Schema.builder()
+    .column("AGE", ColumnType.INTEGER)
+    .column("REGION", ColumnType.STRING)
+    .column("DISCOUNT", ColumnType.DECIMAL)
+    .build();
+
 DecisionTableSource source = DecisionTableSources.csv(Path.of("examples/pricing.csv"));
-ValidationResult validation = Kisoku.validator().validate(source);
+ValidationResult validation = Kisoku.validator().validate(source, schema);
 CompiledRuleset compiled = Kisoku.compiler()
-    .compile(source, CompileOptions.production().withRuleSelection(RuleSelectionPolicy.AUTO));
+    .compile(source, CompileOptions.production(schema).withRuleSelection(RuleSelectionPolicy.AUTO));
 try (LoadedRuleset ruleset = Kisoku.loader().load(compiled, LoadOptions.memoryMap())) {
   DecisionOutput output = ruleset.evaluate(DecisionInput.of(Map.of("AGE", 25)));
 }
 ```
+
+## Schema API
+An external schema defines column types for validation and compilation:
+- `Schema.builder().column(name, type).build()` - fluent schema construction
+- Supported types: `STRING`, `INTEGER`, `DECIMAL`, `BOOLEAN`, `DATE`, `TIMESTAMP`
+- Reserved columns (`RULE_ID`, `PRIORITY`) have implicit types and don't need declaration

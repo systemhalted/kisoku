@@ -14,6 +14,7 @@ import in.systemhalted.kisoku.api.evaluation.RuleSelectionPolicy;
 import in.systemhalted.kisoku.api.loader.LoadOptions;
 import in.systemhalted.kisoku.api.loader.LoadedRuleset;
 import in.systemhalted.kisoku.api.loader.RulesetLoader;
+import in.systemhalted.kisoku.api.model.Schema;
 import in.systemhalted.kisoku.api.validator.RulesetValidator;
 import in.systemhalted.kisoku.api.validator.ValidationResult;
 import in.systemhalted.kisoku.io.DecisionTableSources;
@@ -33,13 +34,14 @@ class DecisionTableLifecycleTest {
   @Test
   void selectsHighestPriorityWhenPresent(@TempDir Path tempDir) throws IOException {
     Path csv = DecisionTableFixtures.writePriorityTable(tempDir);
-    ValidationResult validation = validator.validate(DecisionTableSources.csv(csv));
-    assertTrue(validation.isOk());
+    Schema schema = DecisionTableFixtures.priorityTableSchema();
+    ValidationResult validation = validator.validate(DecisionTableSources.csv(csv), schema);
+    assertTrue(validation.isOk(), () -> "Validation failed: " + validation.issues());
 
     CompiledRuleset compiled =
         compiler.compile(
             DecisionTableSources.csv(csv),
-            CompileOptions.production().withRuleSelection(RuleSelectionPolicy.AUTO));
+            CompileOptions.production(schema).withRuleSelection(RuleSelectionPolicy.AUTO));
 
     try (LoadedRuleset ruleset = loader.load(compiled, LoadOptions.memoryMap())) {
       DecisionInput input = DecisionInput.of(Map.of("AGE", 25, "REGION", "EMEA"));
@@ -52,13 +54,14 @@ class DecisionTableLifecycleTest {
   @Test
   void fallsBackToFirstMatchWhenPriorityMissing(@TempDir Path tempDir) throws IOException {
     Path csv = DecisionTableFixtures.writeFirstMatchTable(tempDir);
-    ValidationResult validation = validator.validate(DecisionTableSources.csv(csv));
-    assertTrue(validation.isOk());
+    Schema schema = DecisionTableFixtures.firstMatchTableSchema();
+    ValidationResult validation = validator.validate(DecisionTableSources.csv(csv), schema);
+    assertTrue(validation.isOk(), () -> "Validation failed: " + validation.issues());
 
     CompiledRuleset compiled =
         compiler.compile(
             DecisionTableSources.csv(csv),
-            CompileOptions.production().withRuleSelection(RuleSelectionPolicy.AUTO));
+            CompileOptions.production(schema).withRuleSelection(RuleSelectionPolicy.AUTO));
 
     try (LoadedRuleset ruleset = loader.load(compiled, LoadOptions.onHeap())) {
       DecisionInput input = DecisionInput.of(Map.of("AGE", 25, "REGION", "APAC"));
@@ -71,11 +74,12 @@ class DecisionTableLifecycleTest {
   @Test
   void allowsExplicitFirstMatchOverride(@TempDir Path tempDir) throws IOException {
     Path csv = DecisionTableFixtures.writePriorityTable(tempDir);
+    Schema schema = DecisionTableFixtures.priorityTableSchema();
 
     CompiledRuleset compiled =
         compiler.compile(
             DecisionTableSources.csv(csv),
-            CompileOptions.production().withRuleSelection(RuleSelectionPolicy.FIRST_MATCH));
+            CompileOptions.production(schema).withRuleSelection(RuleSelectionPolicy.FIRST_MATCH));
 
     try (LoadedRuleset ruleset = loader.load(compiled, LoadOptions.onHeap())) {
       DecisionInput input = DecisionInput.of(Map.of("AGE", 25, "REGION", "APAC"));
@@ -88,17 +92,18 @@ class DecisionTableLifecycleTest {
   @Test
   void stripsTestOnlyColumnsInProductionArtifacts(@TempDir Path tempDir) throws IOException {
     Path csv = DecisionTableFixtures.writePriorityTable(tempDir);
+    Schema schema = DecisionTableFixtures.priorityTableSchema();
 
     CompiledRuleset testArtifact =
         compiler.compile(
             DecisionTableSources.csv(csv),
-            CompileOptions.testInclusive().withRuleSelection(RuleSelectionPolicy.AUTO));
+            CompileOptions.testInclusive(schema).withRuleSelection(RuleSelectionPolicy.AUTO));
     assertTrue(testArtifact.metadata().outputColumns().contains("TEST_EXPECTED_SEGMENT"));
 
     CompiledRuleset prodArtifact =
         compiler.compile(
             DecisionTableSources.csv(csv),
-            CompileOptions.production().withRuleSelection(RuleSelectionPolicy.AUTO));
+            CompileOptions.production(schema).withRuleSelection(RuleSelectionPolicy.AUTO));
     assertFalse(prodArtifact.metadata().outputColumns().contains("TEST_EXPECTED_SEGMENT"));
   }
 }

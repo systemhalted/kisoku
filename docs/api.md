@@ -16,8 +16,8 @@
 - `in.systemhalted.kisoku.io` CSV readers and source adapters.
 
 ## Lifecycle Overview
-1) `validate(source)` -> `ValidationResult`
-2) `compile(source, CompileOptions)` -> `CompiledRuleset`
+1) `validate(source, schema)` -> `ValidationResult`
+2) `compile(source, CompileOptions.production(schema))` -> `CompiledRuleset`
 3) `load(compiled, LoadOptions)` -> `LoadedRuleset`
 4) `evaluate(input)` or `evaluateBulk(base, variants)`
 
@@ -36,7 +36,7 @@ public enum TableFormat {
 }
 
 public interface RulesetValidator {
-  ValidationResult validate(DecisionTableSource source);
+  ValidationResult validate(DecisionTableSource source, Schema schema);
 }
 
 public interface RulesetCompiler {
@@ -52,6 +52,26 @@ public interface LoadedRuleset extends AutoCloseable {
   BulkResult evaluateBulk(DecisionInput base, List<DecisionInput> variants);
   RulesetMetadata metadata();
   @Override void close();
+}
+```
+
+## Schema API
+```java
+public enum ColumnType {
+  STRING, INTEGER, DECIMAL, BOOLEAN, DATE, TIMESTAMP
+}
+
+public final class Schema {
+  public static Builder builder();
+  public Optional<ColumnSchema> column(String name);
+  public List<ColumnSchema> columns();
+  public boolean hasColumn(String name);
+
+  public static final class Builder {
+    public Builder column(String name, ColumnType type);
+    public Builder column(String name, ColumnType type, boolean nullable);
+    public Schema build();
+  }
 }
 ```
 
@@ -170,19 +190,26 @@ Supported types:
 
 ## Example Usage (Sketch)
 ```java
+// Define schema for non-reserved columns
+Schema schema = Schema.builder()
+    .column("AGE", ColumnType.INTEGER)
+    .column("REGION", ColumnType.STRING)
+    .column("DISCOUNT", ColumnType.DECIMAL)
+    .build();
+
 DecisionTableSource source = DecisionTableSources.csv(Path.of("examples/pricing.csv"));
 RulesetValidator validator = Kisoku.validator();
 RulesetCompiler compiler = Kisoku.compiler();
 RulesetLoader loader = Kisoku.loader();
 
-ValidationResult validation = validator.validate(source);
+ValidationResult validation = validator.validate(source, schema);
 if (!validation.isOk()) {
   throw new ValidationException(validation.issues());
 }
 
 CompiledRuleset compiled = compiler.compile(
     source,
-    CompileOptions.production().withRuleSelection(RuleSelectionPolicy.AUTO));
+    CompileOptions.production(schema).withRuleSelection(RuleSelectionPolicy.AUTO));
 try (LoadedRuleset ruleset = loader.load(compiled, LoadOptions.memoryMap())) {
   DecisionInput input = DecisionInput.of(Map.of("AGE", 42, "REGION", "APAC"));
   DecisionOutput output = ruleset.evaluate(input);

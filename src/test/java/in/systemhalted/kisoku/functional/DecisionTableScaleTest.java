@@ -10,6 +10,7 @@ import in.systemhalted.kisoku.api.evaluation.RuleSelectionPolicy;
 import in.systemhalted.kisoku.api.loader.LoadOptions;
 import in.systemhalted.kisoku.api.loader.LoadedRuleset;
 import in.systemhalted.kisoku.api.loader.RulesetLoader;
+import in.systemhalted.kisoku.api.model.Schema;
 import in.systemhalted.kisoku.io.DecisionTableSources;
 import in.systemhalted.kisoku.testutil.DecisionTableFixtures;
 import java.io.IOException;
@@ -40,11 +41,12 @@ class DecisionTableScaleTest {
     int outputColumns = Integer.getInteger("kisoku.scaleOutputs", TYPICAL_OUTPUT_COLUMNS);
 
     Path csv = DecisionTableFixtures.writeLargeTable(tempDir, rows, inputColumns, outputColumns);
+    Schema schema = DecisionTableFixtures.largeTableSchema(inputColumns, outputColumns);
 
     CompiledRuleset compiled =
         compiler.compile(
             DecisionTableSources.csv(csv),
-            CompileOptions.production().withRuleSelection(RuleSelectionPolicy.AUTO));
+            CompileOptions.production(schema).withRuleSelection(RuleSelectionPolicy.AUTO));
     assertEquals(rows, compiled.metadata().rowCount());
     assertEquals(inputColumns, compiled.metadata().inputColumnCount());
     assertEquals(outputColumns, compiled.metadata().outputColumnCount());
