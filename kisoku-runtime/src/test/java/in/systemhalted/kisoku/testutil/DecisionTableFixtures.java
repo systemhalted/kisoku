@@ -40,7 +40,12 @@ public final class DecisionTableFixtures {
   public static Schema largeTableSchema(int inputColumns, int outputColumns) {
     Schema.Builder builder = Schema.builder();
     for (int i = 1; i <= inputColumns; i++) {
-      builder.column(String.format("FIELD_%03d", i), ColumnType.STRING);
+      if (i == 2) {
+        // FIELD_002 uses BETWEEN operator with numeric values (0,100)
+        builder.column(String.format("FIELD_%03d", i), ColumnType.INTEGER);
+      } else {
+        builder.column(String.format("FIELD_%03d", i), ColumnType.STRING);
+      }
     }
     for (int i = 1; i <= outputColumns; i++) {
       builder.column(String.format("RESULT_%03d", i), ColumnType.STRING);

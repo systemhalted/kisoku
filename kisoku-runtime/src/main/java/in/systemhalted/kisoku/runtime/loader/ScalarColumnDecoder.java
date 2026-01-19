@@ -80,4 +80,24 @@ final class ScalarColumnDecoder implements ColumnDecoder {
     int storedValue = values[rowIndex];
     return TypeCoercion.decodeValue(storedValue, column.type(), dictionary);
   }
+
+  // Package-private accessors for index building
+
+  /**
+   * Get the underlying values array for index building.
+   *
+   * @return the values array (one int per row)
+   */
+  int[] values() {
+    return values;
+  }
+
+  /**
+   * Get the presence bitmap for index building.
+   *
+   * @return the presence bitmap (MSB-first encoding)
+   */
+  byte[] presenceBitmap() {
+    return presenceBitmap;
+  }
 }

@@ -7,8 +7,11 @@ import in.systemhalted.kisoku.api.evaluation.DecisionOutput;
 import in.systemhalted.kisoku.api.evaluation.EvaluationException;
 import in.systemhalted.kisoku.api.loading.LoadedRuleset;
 import in.systemhalted.kisoku.runtime.csv.Operator;
+import in.systemhalted.kisoku.runtime.loader.index.CandidateBitmap;
+import in.systemhalted.kisoku.runtime.loader.index.ColumnIndex;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -30,17 +33,28 @@ final class LoadedRulesetImpl implements LoadedRuleset {
   private final int[] outputColumnIndices;
   private final int ruleIdColumnIndex;
 
+  // Indexed evaluation support
+  private final List<ColumnIndex> columnIndexes; // May be null if indexing disabled
+  private final long[] allRowsBitmap; // All rows as candidates, or null
+  private final StringDictionaryReader dictionary; // For type coercion during indexed eval
+
   LoadedRulesetImpl(
       RulesetMetadata metadata,
       List<ColumnDefinition> columns,
       List<ColumnDecoder> decoders,
       int[] ruleOrder,
-      ByteBuffer directBuffer) {
+      ByteBuffer directBuffer,
+      List<ColumnIndex> columnIndexes,
+      StringDictionaryReader dictionary) {
     this.metadata = metadata;
     this.columns = List.copyOf(columns);
     this.decoders = List.copyOf(decoders);
     this.ruleOrder = ruleOrder.clone();
     this.directBuffer = directBuffer;
+    // Use unmodifiableList since columnIndexes may contain nulls (non-indexed columns)
+    this.columnIndexes =
+        columnIndexes != null ? Collections.unmodifiableList(new ArrayList<>(columnIndexes)) : null;
+    this.dictionary = dictionary;
 
     // Pre-compute column indices
     List<Integer> inputIndices = new ArrayList<>();
@@ -61,14 +75,84 @@ final class LoadedRulesetImpl implements LoadedRuleset {
     this.inputColumnIndices = inputIndices.stream().mapToInt(Integer::intValue).toArray();
     this.outputColumnIndices = outputIndices.stream().mapToInt(Integer::intValue).toArray();
     this.ruleIdColumnIndex = ruleIdIdx;
+
+    // Pre-compute all-rows bitmap for indexed evaluation
+    if (columnIndexes != null && !columnIndexes.isEmpty()) {
+      this.allRowsBitmap = CandidateBitmap.allOnes(ruleOrder.length);
+    } else {
+      this.allRowsBitmap = null;
+    }
   }
 
   @Override
   public DecisionOutput evaluate(DecisionInput input) {
-    // Iterate rules in order (pre-sorted by priority if applicable)
+    // Use indexed evaluation if indexes are available
+    if (columnIndexes != null && allRowsBitmap != null) {
+      return evaluateIndexed(input);
+    }
+
+    // Fallback to linear scan
+    return evaluateLinear(input);
+  }
+
+  /**
+   * Linear evaluation: O(n) scan through all rules in order.
+   *
+   * <p>Used when indexes are not available.
+   */
+  private DecisionOutput evaluateLinear(DecisionInput input) {
     for (int rowIndex : ruleOrder) {
       if (matchesAllInputs(rowIndex, input)) {
         return buildOutput(rowIndex);
+      }
+    }
+    throw new EvaluationException("No matching rule found for input");
+  }
+
+  /**
+   * Indexed evaluation: filter candidates via bitmap intersection, then verify.
+   *
+   * <p>Algorithm: 1. Start with all rows as candidates 2. For each indexed column, intersect with
+   * column's candidate bitmap 3. Iterate remaining candidates in priority order 4. Verify full
+   * match (handles non-indexed columns and blank cells)
+   */
+  private DecisionOutput evaluateIndexed(DecisionInput input) {
+    // Start with all rows as candidates
+    long[] candidates = CandidateBitmap.copy(allRowsBitmap);
+
+    // Intersect with each indexed column's candidates
+    for (int colIdx : inputColumnIndices) {
+      ColumnIndex index = columnIndexes.get(colIdx);
+      if (index == null) {
+        continue; // Column not indexed, will be verified later
+      }
+
+      ColumnDefinition col = columns.get(colIdx);
+      if (col.isTestOnly()) {
+        continue;
+      }
+
+      // Get input value and coerce to comparable int
+      Object inputValue = input.get(col.name()).orElse(null);
+      int coercedValue = TypeCoercion.toComparableInt(inputValue, col.type(), dictionary);
+
+      // Get candidate rows from index and intersect
+      long[] colCandidates = index.getCandidates(coercedValue);
+      CandidateBitmap.andInPlace(candidates, colCandidates);
+
+      // Early termination if no candidates remain
+      if (CandidateBitmap.isEmpty(candidates)) {
+        throw new EvaluationException("No matching rule found for input");
+      }
+    }
+
+    // Iterate candidates in priority order (ruleOrder) and verify full match
+    for (int rowIndex : ruleOrder) {
+      if (CandidateBitmap.isSet(candidates, rowIndex)) {
+        // Verify all inputs match (handles non-indexed columns)
+        if (matchesAllInputs(rowIndex, input)) {
+          return buildOutput(rowIndex);
+        }
       }
     }
 
