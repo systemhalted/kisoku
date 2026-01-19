@@ -75,6 +75,8 @@ class HeapBudgetMemoryTest {
     System.out.printf("After compilation: %s%n", afterCompile.format());
 
     try (LoadedRuleset ruleset = loader.load(compiled, LoadOptions.memoryMap())) {
+      // Release compiled reference before measurement to avoid inflating heap metrics
+      compiled = null;
       MemorySnapshot afterLoad = MemoryTestUtils.stableSnapshot();
       System.out.printf("After load (memory-mapped): %s%n", afterLoad.format());
 
@@ -127,6 +129,8 @@ class HeapBudgetMemoryTest {
             CompileOptions.production(schema).withRuleSelection(RuleSelectionPolicy.AUTO));
 
     try (LoadedRuleset ruleset = loader.load(compiled, LoadOptions.memoryMap())) {
+      // Release compiled reference before measurement to avoid inflating heap metrics
+      compiled = null;
       MemorySnapshot afterLoad = MemoryTestUtils.stableSnapshot();
       System.out.printf("[20M] After load (memory-mapped): %s%n", afterLoad.format());
 

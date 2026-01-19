@@ -18,6 +18,7 @@ import in.systemhalted.kisoku.testutil.DecisionTableFixtures;
 import in.systemhalted.kisoku.testutil.MemoryTestUtils;
 import in.systemhalted.kisoku.testutil.MemoryTestUtils.MemorySnapshot;
 import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Tag;
@@ -55,18 +56,20 @@ class PerEvaluationMemoryTest {
     Schema schema = DecisionTableFixtures.largeTableSchema(INPUT_COLUMNS, OUTPUT_COLUMNS);
 
     // Create small table (1K rows)
+    Path smallDir = tempDir.resolve("small");
+    Files.createDirectories(smallDir);
     Path smallCsv =
-        DecisionTableFixtures.writeLargeTable(
-            tempDir.resolve("small"), 1_000L, INPUT_COLUMNS, OUTPUT_COLUMNS);
+        DecisionTableFixtures.writeLargeTable(smallDir, 1_000L, INPUT_COLUMNS, OUTPUT_COLUMNS);
     CompiledRuleset smallCompiled =
         compiler.compile(
             DecisionTableSources.csv(smallCsv),
             CompileOptions.production(schema).withRuleSelection(RuleSelectionPolicy.AUTO));
 
     // Create large table (1M rows)
+    Path largeDir = tempDir.resolve("large");
+    Files.createDirectories(largeDir);
     Path largeCsv =
-        DecisionTableFixtures.writeLargeTable(
-            tempDir.resolve("large"), 1_000_000L, INPUT_COLUMNS, OUTPUT_COLUMNS);
+        DecisionTableFixtures.writeLargeTable(largeDir, 1_000_000L, INPUT_COLUMNS, OUTPUT_COLUMNS);
     CompiledRuleset largeCompiled =
         compiler.compile(
             DecisionTableSources.csv(largeCsv),
