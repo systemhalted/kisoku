@@ -1,7 +1,6 @@
 package in.systemhalted.kisoku.functional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import in.systemhalted.kisoku.api.DecisionTableSources;

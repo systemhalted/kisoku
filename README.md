@@ -49,15 +49,25 @@ Rule selection:
 
 ## Build and Test
 ```bash
-mvn -q -DskipTests package
-mvn test
-mvn verify
-mvn spotless:apply
+mvn -q -DskipTests package    # Compile and package
+mvn test                       # Run unit tests
+mvn verify                     # Run unit + integration tests
+mvn spotless:apply             # Format code
 ```
 
-Scale tests are gated:
+Scale and memory tests are gated (excluded by default for fast feedback):
 ```bash
+# Memory constraint verification (1GB heap budget, off-heap usage)
+mvn -Dkisoku.runMemoryTests=true test
+
+# Scale tests at 5M rows (includes memory tests)
 mvn -Dkisoku.runScaleTests=true -Dkisoku.scaleRows=5000000 test
+
+# Full verification including integration tests
+mvn -Dkisoku.runScaleTests=true verify
+
+# Maximum scale at 20M rows (requires significant time/resources)
+mvn -Dkisoku.runMaxScaleTests=true -Dkisoku.scaleRows=20000000 verify
 ```
 
 ## Library Usage (Sketch)
