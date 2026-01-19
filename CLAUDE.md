@@ -10,11 +10,24 @@ mvn test                             # Run unit tests
 mvn verify                           # Run unit + integration tests + formatting check
 mvn spotless:apply                   # Format code with google-java-format
 
-# Scale tests (gated)
+# Memory tests (gated) - verifies PRD memory constraints
+mvn -Dkisoku.runMemoryTests=true test
+
+# Scale tests (gated) - includes memory tests
 mvn -Dkisoku.runScaleTests=true -Dkisoku.scaleRows=5000000 test
+
+# Full scale + memory integration tests
+mvn -Dkisoku.runScaleTests=true verify
+
+# Maximum scale (20M rows) - requires significant resources
+mvn -Dkisoku.runMaxScaleTests=true -Dkisoku.scaleRows=20000000 verify
 ```
 
-Tests use JUnit 5. Unit tests are `*Test.java`, integration tests are `*IT.java`. Scale tests are tagged `scale`.
+Tests use JUnit 5. Unit tests are `*Test.java`, integration tests are `*IT.java`. Tests are tagged:
+- `scale` - Large table tests (5M+ rows)
+- `memory` - Memory constraint verification tests
+
+Both `scale` and `memory` tags are excluded by default for fast feedback.
 
 ## Project Overview
 

@@ -60,6 +60,8 @@
             <excludes>
               <exclude>**/*IT.java</exclude>
             </excludes>
+            <!-- Exclude scale and memory tests by default -->
+            <excludedGroups>scale,memory</excludedGroups>
           </configuration>
         </plugin>
         <plugin>
@@ -109,4 +111,68 @@
       </plugin>
     </plugins>
   </build>
+
+  <profiles>
+    <!-- Memory tests profile: run with -Dkisoku.runMemoryTests=true -->
+    <profile>
+      <id>memory-tests</id>
+      <activation>
+        <property>
+          <name>kisoku.runMemoryTests</name>
+          <value>true</value>
+        </property>
+      </activation>
+      <build>
+        <plugins>
+          <plugin>
+            <artifactId>maven-surefire-plugin</artifactId>
+            <configuration>
+              <!-- Include memory-tagged tests -->
+              <excludedGroups>scale</excludedGroups>
+              <groups>memory</groups>
+              <argLine>-Xmx1536m -XX:MaxDirectMemorySize=2g</argLine>
+            </configuration>
+          </plugin>
+          <plugin>
+            <artifactId>maven-failsafe-plugin</artifactId>
+            <configuration>
+              <groups>memory</groups>
+              <argLine>-Xmx1536m -XX:MaxDirectMemorySize=2g</argLine>
+            </configuration>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+
+    <!-- Scale tests profile: run with -Dkisoku.runScaleTests=true -->
+    <profile>
+      <id>scale-tests</id>
+      <activation>
+        <property>
+          <name>kisoku.runScaleTests</name>
+          <value>true</value>
+        </property>
+      </activation>
+      <build>
+        <plugins>
+          <plugin>
+            <artifactId>maven-surefire-plugin</artifactId>
+            <configuration>
+              <!-- Include scale and memory tests when running scale tests -->
+              <excludedGroups></excludedGroups>
+              <groups>scale,memory</groups>
+              <argLine>-Xmx1536m -XX:MaxDirectMemorySize=4g</argLine>
+            </configuration>
+          </plugin>
+          <plugin>
+            <artifactId>maven-failsafe-plugin</artifactId>
+            <configuration>
+              <groups>scale,memory</groups>
+              <argLine>-Xmx1536m -XX:MaxDirectMemorySize=4g</argLine>
+            </configuration>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+  </profiles>
 </project>

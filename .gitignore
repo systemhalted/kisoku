@@ -17,3 +17,4 @@ target/
 
 # VS Code
 .vscode/
+.claude

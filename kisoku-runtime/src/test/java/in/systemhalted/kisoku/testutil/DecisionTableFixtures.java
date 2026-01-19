@@ -2,13 +2,16 @@ package in.systemhalted.kisoku.testutil;
 
 import in.systemhalted.kisoku.api.ColumnType;
 import in.systemhalted.kisoku.api.Schema;
+import in.systemhalted.kisoku.api.evaluation.DecisionInput;
 import java.io.BufferedWriter;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 /** Generates CSV decision table fixtures for functional and scale tests. */
 public final class DecisionTableFixtures {
@@ -132,6 +135,63 @@ public final class DecisionTableFixtures {
       }
     }
     return path;
+  }
+
+  /**
+   * Creates a deterministic test input based on a seed value.
+   *
+   * <p>Generates input values that match the pattern used in large table generation, ensuring
+   * predictable rule matching for testing.
+   *
+   * @param seed seed value for deterministic generation
+   * @param inputColumns number of input columns to generate values for
+   * @return a DecisionInput with values matching the large table schema
+   */
+  public static DecisionInput createTestInput(int seed, int inputColumns) {
+    Map<String, Object> values = new HashMap<>();
+    for (int i = 1; i <= inputColumns; i++) {
+      String columnName = String.format("FIELD_%03d", i);
+      if (i == 1) {
+        values.put(columnName, "VALUE_" + (seed % 100));
+      } else if (i == 2) {
+        values.put(columnName, seed % 100);
+      } else if (i == 3) {
+        values.put(columnName, "OTHER_VALUE");
+      } else {
+        values.put(columnName, "VALUE_" + ((seed + i) % 100));
+      }
+    }
+    return DecisionInput.of(values);
+  }
+
+  /**
+   * Creates a list of variant inputs for bulk evaluation testing.
+   *
+   * @param count number of variants to generate
+   * @param inputColumns number of input columns per variant
+   * @return list of DecisionInput variants
+   */
+  public static List<DecisionInput> createBulkVariants(int count, int inputColumns) {
+    List<DecisionInput> variants = new ArrayList<>(count);
+    for (int i = 0; i < count; i++) {
+      variants.add(createTestInput(i, inputColumns));
+    }
+    return variants;
+  }
+
+  /**
+   * Creates a base input for bulk evaluation (typically with common values).
+   *
+   * @param inputColumns number of input columns in the schema
+   * @return a DecisionInput with base values
+   */
+  public static DecisionInput createBaseInput(int inputColumns) {
+    Map<String, Object> values = new HashMap<>();
+    // Set only a subset of columns as base values
+    if (inputColumns >= 2) {
+      values.put("FIELD_002", 50);
+    }
+    return DecisionInput.of(values);
   }
 
   private static Path writeCsv(
