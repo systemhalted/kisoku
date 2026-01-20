@@ -14,7 +14,7 @@ package in.systemhalted.kisoku.runtime.loader.index;
  *
  * <p>Indexes are immutable and thread-safe after construction.
  */
-public sealed interface ColumnIndex permits EqualityIndex {
+public sealed interface ColumnIndex permits EqualityIndex, ComparisonIndex {
   // Note: ComparisonIndex, RangeIntervalIndex, SetMembershipIndex will be added in Phase 2
 
   /**

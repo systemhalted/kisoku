@@ -6,8 +6,8 @@ package in.systemhalted.kisoku.runtime.loader.index;
  * <p>Uses {@code long[]} for efficient 64-bit bitwise operations. For 5M rows, each bitmap is ~625
  * KB (78,125 longs).
  *
- * <p>Bit indexing: bit i is at {@code words[i / 64]} bit {@code (i % 64)}, stored LSB-first within
- * each word.
+ * <p>*Bit indexing*: bit *i* is at {@code words[i / 64]} bit {@code (i % 64)}, stored LSB-first
+ * within each word.
  */
 public final class CandidateBitmap {
   private CandidateBitmap() {}
