@@ -10,7 +10,8 @@ evaluation, and provides deterministic results for single and bulk inputs.
 - CSV sources only (JSON/Database loaders will be added later).
 - **Validator**: Implemented - validates CSV structure, operators, and schema.
 - **Compiler**: Implemented - compiles CSV to binary artifact format.
-- **Loader**: Not yet implemented - loads compiled artifacts for evaluation.
+- **Loader**: Implemented - loads compiled artifacts for evaluation.
+- **Indexed Evaluation**: Implemented for EQ, GT, GTE, LT, LTE operators.
 - See `docs/PRD.md` for requirements and constraints.
 - Not ready for prime time yet.
 
@@ -69,6 +70,11 @@ mvn -Dkisoku.runScaleTests=true verify
 # Maximum scale at 20M rows (requires significant time/resources)
 mvn -Dkisoku.runMaxScaleTests=true -Dkisoku.scaleRows=20000000 verify
 ```
+
+**Scale Test Notes:**
+- Verified passing at 100K rows (60 input + 20 output columns) in ~10s.
+- 500K+ rows requires increased heap (default profile uses `-Xmx1536m`).
+- TODO: Tune memory settings for larger scale tests.
 
 ## Library Usage (Sketch)
 ```java

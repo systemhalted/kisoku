@@ -176,6 +176,158 @@ class IndexedEvaluationTest {
     }
   }
 
+  // ============================================================
+  // Phase 2: Comparison Operator Tests (GT, GTE, LT, LTE)
+  // ============================================================
+
+  @Test
+  void indexedEvaluationWithGtOperator(@TempDir Path tempDir) throws IOException {
+    Path csv = writeGtOperatorTable(tempDir);
+    Schema schema = comparisonTableSchema();
+
+    ValidationResult validation = validator.validate(DecisionTableSources.csv(csv), schema);
+    assertTrue(validation.isOk(), () -> "Validation failed: " + validation.issues());
+
+    CompiledRuleset compiled =
+        compiler.compile(DecisionTableSources.csv(csv), CompileOptions.production(schema));
+
+    try (LoadedRuleset indexedRuleset = loader.load(compiled, LoadOptions.memoryMap())) {
+      try (LoadedRuleset linearRuleset =
+          loader.load(compiled, LoadOptions.memoryMap().withPrewarmIndexes(false))) {
+
+        // Test various AGE values
+        List<Integer> testAges = List.of(15, 18, 25, 30, 50, 60, 65, 70);
+
+        for (int age : testAges) {
+          DecisionInput input = DecisionInput.of(Map.of("AGE", age));
+
+          DecisionOutput indexedResult = indexedRuleset.evaluate(input);
+          DecisionOutput linearResult = linearRuleset.evaluate(input);
+
+          assertEquals(
+              linearResult.ruleId(), indexedResult.ruleId(), "Rule ID mismatch for AGE=" + age);
+          assertEquals(
+              linearResult.outputs(), indexedResult.outputs(), "Outputs mismatch for AGE=" + age);
+        }
+      }
+    }
+  }
+
+  @Test
+  void indexedEvaluationWithAllComparisonOperators(@TempDir Path tempDir) throws IOException {
+    Path csv = writeAllComparisonOperatorsTable(tempDir);
+    Schema schema = allComparisonOperatorsSchema();
+
+    ValidationResult validation = validator.validate(DecisionTableSources.csv(csv), schema);
+    assertTrue(validation.isOk(), () -> "Validation failed: " + validation.issues());
+
+    CompiledRuleset compiled =
+        compiler.compile(DecisionTableSources.csv(csv), CompileOptions.production(schema));
+
+    try (LoadedRuleset indexedRuleset = loader.load(compiled, LoadOptions.memoryMap())) {
+      try (LoadedRuleset linearRuleset =
+          loader.load(compiled, LoadOptions.memoryMap().withPrewarmIndexes(false))) {
+
+        // Test various combinations
+        List<Map<String, Object>> testInputs =
+            List.of(
+                Map.of("MIN_AGE", 20, "MAX_AGE", 50, "SCORE", 80, "LEVEL", 5),
+                Map.of("MIN_AGE", 18, "MAX_AGE", 65, "SCORE", 50, "LEVEL", 3),
+                Map.of("MIN_AGE", 25, "MAX_AGE", 30, "SCORE", 90, "LEVEL", 10),
+                Map.of("MIN_AGE", 10, "MAX_AGE", 100, "SCORE", 10, "LEVEL", 1));
+
+        for (Map<String, Object> inputValues : testInputs) {
+          DecisionInput input = DecisionInput.of(inputValues);
+
+          DecisionOutput indexedResult = indexedRuleset.evaluate(input);
+          DecisionOutput linearResult = linearRuleset.evaluate(input);
+
+          assertEquals(
+              linearResult.ruleId(),
+              indexedResult.ruleId(),
+              "Rule ID mismatch for input: " + inputValues);
+        }
+      }
+    }
+  }
+
+  @Test
+  void indexedEvaluationComparisonEdgeCases(@TempDir Path tempDir) throws IOException {
+    Path csv = writeComparisonEdgeCaseTable(tempDir);
+    Schema schema = comparisonEdgeCaseSchema();
+
+    ValidationResult validation = validator.validate(DecisionTableSources.csv(csv), schema);
+    assertTrue(validation.isOk(), () -> "Validation failed: " + validation.issues());
+
+    CompiledRuleset compiled =
+        compiler.compile(DecisionTableSources.csv(csv), CompileOptions.production(schema));
+
+    try (LoadedRuleset indexedRuleset = loader.load(compiled, LoadOptions.memoryMap())) {
+      try (LoadedRuleset linearRuleset =
+          loader.load(compiled, LoadOptions.memoryMap().withPrewarmIndexes(false))) {
+
+        // Boundary value: exactly equals rule threshold (GTE 18 vs GT 18)
+        DecisionInput boundaryInput = DecisionInput.of(Map.of("VALUE", 18));
+        assertEquals(
+            linearRuleset.evaluate(boundaryInput).ruleId(),
+            indexedRuleset.evaluate(boundaryInput).ruleId(),
+            "Boundary value mismatch");
+
+        // Very small value: should match LT rules
+        DecisionInput smallInput = DecisionInput.of(Map.of("VALUE", 1));
+        assertEquals(
+            linearRuleset.evaluate(smallInput).ruleId(),
+            indexedRuleset.evaluate(smallInput).ruleId(),
+            "Small value mismatch");
+
+        // Very large value: should match GT rules
+        DecisionInput largeInput = DecisionInput.of(Map.of("VALUE", 1000));
+        assertEquals(
+            linearRuleset.evaluate(largeInput).ruleId(),
+            indexedRuleset.evaluate(largeInput).ruleId(),
+            "Large value mismatch");
+      }
+    }
+  }
+
+  @Test
+  void indexedEvaluationMixedEqAndComparison(@TempDir Path tempDir) throws IOException {
+    // Tests EQ (indexed) + GT (indexed) columns together
+    Path csv = writeMixedEqAndComparisonTable(tempDir);
+    Schema schema = mixedEqAndComparisonSchema();
+
+    ValidationResult validation = validator.validate(DecisionTableSources.csv(csv), schema);
+    assertTrue(validation.isOk(), () -> "Validation failed: " + validation.issues());
+
+    CompiledRuleset compiled =
+        compiler.compile(DecisionTableSources.csv(csv), CompileOptions.production(schema));
+
+    try (LoadedRuleset indexedRuleset = loader.load(compiled, LoadOptions.memoryMap())) {
+      try (LoadedRuleset linearRuleset =
+          loader.load(compiled, LoadOptions.memoryMap().withPrewarmIndexes(false))) {
+
+        List<Map<String, Object>> testInputs =
+            List.of(
+                Map.of("REGION", "US", "AMOUNT", 500),
+                Map.of("REGION", "EU", "AMOUNT", 100),
+                Map.of("REGION", "US", "AMOUNT", 50),
+                Map.of("REGION", "APAC", "AMOUNT", 1000));
+
+        for (Map<String, Object> inputValues : testInputs) {
+          DecisionInput input = DecisionInput.of(inputValues);
+
+          DecisionOutput indexedResult = indexedRuleset.evaluate(input);
+          DecisionOutput linearResult = linearRuleset.evaluate(input);
+
+          assertEquals(
+              linearResult.ruleId(),
+              indexedResult.ruleId(),
+              "Rule ID mismatch for input: " + inputValues);
+        }
+      }
+    }
+  }
+
   // --- Helper methods for creating test tables ---
 
   private Schema equalityTableSchema() {
@@ -260,6 +412,96 @@ class IndexedEvaluationTest {
       for (int i = 0; i < rowCount; i++) {
         writer.write("R" + i + ",CODE_" + i + ",VALUE_" + i + "\n");
       }
+    }
+    return path;
+  }
+
+  // --- Phase 2: Comparison operator helper methods ---
+
+  private Schema comparisonTableSchema() {
+    return Schema.builder()
+        .column("AGE", ColumnType.INTEGER)
+        .column("CATEGORY", ColumnType.STRING)
+        .build();
+  }
+
+  private Path writeGtOperatorTable(Path dir) throws IOException {
+    Path path = dir.resolve("gt-operator.csv");
+    try (BufferedWriter writer = Files.newBufferedWriter(path, StandardCharsets.UTF_8)) {
+      writer.write("RULE_ID,PRIORITY,AGE,CATEGORY\n");
+      writer.write("RULE_ID,PRIORITY,GT,SET\n");
+      // Rules with different AGE thresholds using GT operator
+      writer.write("R1,40,65,SENIOR\n"); // AGE > 65
+      writer.write("R2,30,30,ADULT\n"); // AGE > 30
+      writer.write("R3,20,18,YOUNG_ADULT\n"); // AGE > 18
+      writer.write("R4,10,,MINOR\n"); // Blank = any age (fallback)
+    }
+    return path;
+  }
+
+  private Schema allComparisonOperatorsSchema() {
+    return Schema.builder()
+        .column("MIN_AGE", ColumnType.INTEGER) // GTE
+        .column("MAX_AGE", ColumnType.INTEGER) // LTE
+        .column("SCORE", ColumnType.INTEGER) // GT
+        .column("LEVEL", ColumnType.INTEGER) // LT
+        .column("RESULT", ColumnType.STRING)
+        .build();
+  }
+
+  private Path writeAllComparisonOperatorsTable(Path dir) throws IOException {
+    Path path = dir.resolve("all-comparison.csv");
+    try (BufferedWriter writer = Files.newBufferedWriter(path, StandardCharsets.UTF_8)) {
+      writer.write("RULE_ID,PRIORITY,MIN_AGE,MAX_AGE,SCORE,LEVEL,RESULT\n");
+      writer.write("RULE_ID,PRIORITY,GTE,LTE,GT,LT,SET\n");
+      // Rule matching: MIN_AGE >= X, MAX_AGE <= Y, SCORE > Z, LEVEL < W
+      writer.write("R1,40,21,60,70,8,QUALIFIED\n");
+      writer.write("R2,30,18,65,50,10,ELIGIBLE\n");
+      writer.write("R3,20,16,70,30,15,PENDING\n");
+      writer.write("R4,10,,,,,REJECTED\n"); // Fallback (blanks for all 4 input columns)
+    }
+    return path;
+  }
+
+  private Schema comparisonEdgeCaseSchema() {
+    return Schema.builder()
+        .column("VALUE", ColumnType.INTEGER)
+        .column("RESULT", ColumnType.STRING)
+        .build();
+  }
+
+  private Path writeComparisonEdgeCaseTable(Path dir) throws IOException {
+    Path path = dir.resolve("comparison-edge.csv");
+    try (BufferedWriter writer = Files.newBufferedWriter(path, StandardCharsets.UTF_8)) {
+      writer.write("RULE_ID,PRIORITY,VALUE,RESULT\n");
+      writer.write("RULE_ID,PRIORITY,GTE,SET\n");
+      // Edge case: GTE 18 should match VALUE=18, GT would not
+      writer.write("R1,30,100,HIGH\n"); // VALUE >= 100
+      writer.write("R2,20,18,MEDIUM\n"); // VALUE >= 18
+      writer.write("R3,10,,LOW\n"); // Fallback
+    }
+    return path;
+  }
+
+  private Schema mixedEqAndComparisonSchema() {
+    return Schema.builder()
+        .column("REGION", ColumnType.STRING) // EQ operator
+        .column("AMOUNT", ColumnType.INTEGER) // GT operator
+        .column("TIER", ColumnType.STRING)
+        .build();
+  }
+
+  private Path writeMixedEqAndComparisonTable(Path dir) throws IOException {
+    Path path = dir.resolve("mixed-eq-comparison.csv");
+    try (BufferedWriter writer = Files.newBufferedWriter(path, StandardCharsets.UTF_8)) {
+      writer.write("RULE_ID,PRIORITY,REGION,AMOUNT,TIER\n");
+      writer.write("RULE_ID,PRIORITY,EQ,GT,SET\n");
+      // Mixed EQ (indexed) and GT (indexed) columns
+      writer.write("R1,40,US,500,PLATINUM\n"); // REGION=US AND AMOUNT > 500
+      writer.write("R2,35,US,100,GOLD\n"); // REGION=US AND AMOUNT > 100
+      writer.write("R3,30,EU,200,SILVER\n"); // REGION=EU AND AMOUNT > 200
+      writer.write("R4,20,,100,BRONZE\n"); // Any REGION AND AMOUNT > 100
+      writer.write("R5,10,,,BASIC\n"); // Fallback
     }
     return path;
   }

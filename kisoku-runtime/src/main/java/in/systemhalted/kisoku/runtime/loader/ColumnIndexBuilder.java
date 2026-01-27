@@ -2,13 +2,20 @@ package in.systemhalted.kisoku.runtime.loader;
 
 import in.systemhalted.kisoku.runtime.csv.Operator;
 import in.systemhalted.kisoku.runtime.loader.index.ColumnIndex;
+import in.systemhalted.kisoku.runtime.loader.index.ComparisonIndex;
 import in.systemhalted.kisoku.runtime.loader.index.EqualityIndex;
 
 /**
  * Factory for building column indexes based on operator type.
  *
- * <p>Phase 1 supports only EQ operator via {@link EqualityIndex}. Other operators (GT, LT, BETWEEN,
- * IN, etc.) will be added in Phase 2.
+ * <p>Supported operators:
+ *
+ * <ul>
+ *   <li>EQ - via {@link EqualityIndex} (hash-based)
+ *   <li>GT, GTE, LT, LTE - via {@link ComparisonIndex} (sorted array with binary search)
+ * </ul>
+ *
+ * <p>Future phases will add BETWEEN, IN, and other operators.
  */
 final class ColumnIndexBuilder {
   private ColumnIndexBuilder() {}
@@ -35,15 +42,25 @@ final class ColumnIndexBuilder {
     Operator op = column.operator();
 
     // Phase 1: Only support EQ operator
-    if (op == Operator.EQ && decoder instanceof ScalarColumnDecoder scalarDecoder) {
-      return EqualityIndex.build(scalarDecoder.values(), scalarDecoder.presenceBitmap(), rowCount);
-    }
+    return switch (decoder) {
+      case ScalarColumnDecoder scalarDecoder ->
+          switch (op) {
+            case EQ ->
+                EqualityIndex.build(
+                    scalarDecoder.values(), scalarDecoder.presenceBitmap(), rowCount);
+            case GT, GTE, LT, LTE ->
+                ComparisonIndex.build(
+                    scalarDecoder.values(), scalarDecoder.presenceBitmap(), op, rowCount);
+            case null, default ->
 
-    // Phase 2 will add:
-    // - ComparisonIndex for GT, GTE, LT, LTE
-    // - RangeIntervalIndex for BETWEEN_*, NOT_BETWEEN_*
-    // - SetMembershipIndex for IN, NOT_IN
+                // Future phases will add:
+                // - RangeIntervalIndex for BETWEEN_*, NOT_BETWEEN_*
+                // - SetMembershipIndex for IN, NOT_IN
 
-    return null;
+                null;
+          };
+
+      default -> null;
+    };
   }
 }
