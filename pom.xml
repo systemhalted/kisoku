@@ -159,7 +159,7 @@
             <artifactId>maven-surefire-plugin</artifactId>
             <configuration>
               <!-- Include scale and memory tests when running scale tests -->
-              <excludedGroups></excludedGroups>
+              <excludedGroups combine.self="override"></excludedGroups>
               <groups>scale,memory</groups>
               <argLine>-Xmx1536m -XX:MaxDirectMemorySize=4g</argLine>
             </configuration>
