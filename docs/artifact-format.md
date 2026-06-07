@@ -33,7 +33,7 @@ A compiled artifact is a self-contained binary file that contains:
 |--------|------|-------|-------------|
 | 0 | 4 | magic | Magic bytes: `0x4B495353` ("KISS") |
 | 4 | 2 | version_major | Format major version (currently 1) |
-| 6 | 2 | version_minor | Format minor version (currently 0) |
+| 6 | 2 | version_minor | Format minor version (currently 1) |
 | 8 | 1 | artifact_kind | 0 = PRODUCTION, 1 = TEST_INCLUSIVE |
 | 9 | 1 | rule_selection | 0 = AUTO, 1 = PRIORITY, 2 = FIRST_MATCH |
 | 10 | 2 | reserved | Reserved for future use |
@@ -82,7 +82,7 @@ Each column definition (variable size):
 | 1 | column_type | Type enum ordinal |
 | 1 | column_role | 0 = INPUT, 1 = OUTPUT, 2 = METADATA |
 | 1 | flags | Bit flags (see below) |
-| 4 | data_offset | Byte offset within rule data section |
+| 4 | data_offset | Byte offset of this column's data, relative to the rule data section base (since v1.1; was always 0 in v1.0) |
 
 ### Column Flags
 
@@ -197,7 +197,13 @@ If `rule_selection = FIRST_MATCH`, rules are in original CSV row order.
 - **Major version change**: Breaking format change, old loaders cannot read new artifacts
 - **Minor version change**: Backward-compatible additions, old loaders can read new artifacts
 
-Current version: 1.0
+Current version: 1.1
+
+- **1.1**: `data_offset` in each column definition now holds the column's real byte offset
+  (relative to the rule data section base). v1.0 wrote 0 for every column. The change is
+  backward compatible — a v1.0 reader re-derives offsets by decoding columns sequentially and
+  never reads the field; the loader rejects only on a major-version mismatch.
+- **1.0**: Initial format.
 
 ## Example
 
@@ -210,7 +216,7 @@ R2,21,0.15
 ```
 
 Would produce:
-1. Header: magic=KISS, version=1.0, columns=3, rows=2
+1. Header: magic=KISS, version=1.1, columns=3, rows=2
 2. Dictionary: ["R1", "R2", "0.10", "0.15"]
 3. Column defs: RULE_ID (RULE_ID, STRING), AGE (GTE, INTEGER), DISCOUNT (SET, DECIMAL)
 4. Rule data:

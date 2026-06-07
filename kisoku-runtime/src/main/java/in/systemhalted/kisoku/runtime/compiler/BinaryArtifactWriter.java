@@ -25,7 +25,13 @@ final class BinaryArtifactWriter {
   static final int MAGIC = 0x4B495353;
 
   static final short VERSION_MAJOR = 1;
-  static final short VERSION_MINOR = 0;
+
+  /**
+   * Minor version 1 populates real per-column {@code data_offset} values in column definitions (1.0
+   * wrote 0 for every column). Backward compatible: 1.0 readers re-derive offsets by decoding
+   * columns sequentially and never read the field.
+   */
+  static final short VERSION_MINOR = 1;
 
   private static final int HEADER_SIZE = 32;
 

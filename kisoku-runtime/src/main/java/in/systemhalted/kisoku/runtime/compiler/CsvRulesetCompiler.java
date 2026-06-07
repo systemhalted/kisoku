@@ -94,9 +94,12 @@ public final class CsvRulesetCompiler implements RulesetCompiler {
       orderedRows.add(allRows.get(idx));
     }
 
-    // Encode columns
-    byte[] columnDefinitionsBytes = encodeColumnDefinitions(columns, dictionary);
-    byte[] ruleDataBytes = encodeRuleData(columns, orderedRows, dictionary);
+    // Encode rule data first so we know each column's byte size, then record the
+    // per-column offset (relative to the rule-data section base) in its definition.
+    EncodedRuleData ruleData = encodeRuleData(columns, orderedRows, dictionary);
+    byte[] columnDefinitionsBytes =
+        encodeColumnDefinitions(columns, dictionary, ruleData.columnOffsets());
+    byte[] ruleDataBytes = ruleData.bytes();
     byte[] ruleOrderBytes = encodeRuleOrder(ruleOrder, hasPriority, ruleSelection);
     byte[] dictionaryBytes = dictionary.serialize();
 
@@ -290,11 +293,12 @@ public final class CsvRulesetCompiler implements RulesetCompiler {
     return order;
   }
 
-  private byte[] encodeColumnDefinitions(List<ColumnInfo> columns, StringDictionary dictionary) {
+  private byte[] encodeColumnDefinitions(
+      List<ColumnInfo> columns, StringDictionary dictionary, int[] columnOffsets) {
     ByteArrayOutputStream baos = new ByteArrayOutputStream();
-    int dataOffset = 0;
 
-    for (ColumnInfo col : columns) {
+    for (int c = 0; c < columns.size(); c++) {
+      ColumnInfo col = columns.get(c);
       int nameId = dictionary.getId(col.name);
       int operatorOrdinal = col.operator.ordinal();
       int typeOrdinal = col.type.ordinal();
@@ -302,23 +306,24 @@ public final class CsvRulesetCompiler implements RulesetCompiler {
 
       byte[] colDef =
           BinaryArtifactWriter.writeColumnDefinition(
-              nameId, operatorOrdinal, typeOrdinal, col.role, flags, dataOffset);
+              nameId, operatorOrdinal, typeOrdinal, col.role, flags, columnOffsets[c]);
       try {
         baos.write(colDef);
       } catch (IOException e) {
         throw new CompilationException("Failed to write column definition", e);
       }
-
-      // Update data offset (this is simplified - actual size depends on encoder)
-      // For now we'll compute actual offsets during data encoding
     }
 
     return baos.toByteArray();
   }
 
-  private byte[] encodeRuleData(
+  /** Encoded rule-data section plus each column's byte offset relative to the section base. */
+  private record EncodedRuleData(byte[] bytes, int[] columnOffsets) {}
+
+  private EncodedRuleData encodeRuleData(
       List<ColumnInfo> columns, List<String[]> rows, StringDictionary dictionary) {
     ByteArrayOutputStream baos = new ByteArrayOutputStream();
+    int[] columnOffsets = new int[columns.size()];
 
     // Project rows to only include columns we're encoding
     List<String[]> projectedRows = new ArrayList<>();
@@ -331,8 +336,10 @@ public final class CsvRulesetCompiler implements RulesetCompiler {
       projectedRows.add(projected);
     }
 
+    int offset = 0;
     for (int c = 0; c < columns.size(); c++) {
       ColumnInfo col = columns.get(c);
+      columnOffsets[c] = offset;
       ColumnEncoder encoder = createEncoder(col.operator, dictionary, col.type);
       byte[] encoded = encoder.encode(projectedRows, c);
       try {
@@ -340,9 +347,10 @@ public final class CsvRulesetCompiler implements RulesetCompiler {
       } catch (IOException e) {
         throw new CompilationException("Failed to encode column: " + col.name, e);
       }
+      offset += encoded.length;
     }
 
-    return baos.toByteArray();
+    return new EncodedRuleData(baos.toByteArray(), columnOffsets);
   }
 
   private ColumnEncoder createEncoder(

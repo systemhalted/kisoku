@@ -40,7 +40,13 @@ final class BinaryArtifactReader {
   static final int MAGIC = 0x4B495353;
 
   static final short VERSION_MAJOR = 1;
-  static final short VERSION_MINOR = 0;
+
+  /**
+   * Highest minor version this reader understands. The reader accepts any minor version with a
+   * matching major (it only rejects on major mismatch), so 1.0 and 1.1 artifacts both load.
+   */
+  static final short VERSION_MINOR = 1;
+
   static final int HEADER_SIZE = 32;
   static final int COLUMN_DEF_SIZE = 12;
 
