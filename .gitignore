@@ -18,3 +18,9 @@ target/
 # VS Code
 .vscode/
 .claude
+
+# Eclipse
+bin/
+.classpath
+.project
+.settings/
