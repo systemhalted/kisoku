@@ -102,4 +102,21 @@ final class SetMembershipColumnDecoder implements ColumnDecoder {
     // Set membership columns are input-only, not used for output
     return null;
   }
+
+  // Package-private accessors for index building
+  byte[] presenceBitmap() {
+    return presenceBitmap;
+  }
+
+  int[] listOffsets() {
+    return listOffsets;
+  }
+
+  short[] listLengths() {
+    return listLengths;
+  }
+
+  int[] allValues() {
+    return allValues;
+  }
 }

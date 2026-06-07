@@ -328,6 +328,94 @@ class IndexedEvaluationTest {
     }
   }
 
+  // ============================================================
+  // Phase 3: Set Membership Operator Tests (IN, NOT_IN)
+  // ============================================================
+
+  @Test
+  void indexedEvaluationWithInOperator(@TempDir Path tempDir) throws IOException {
+    Path csv = writeInOperatorTable(tempDir);
+    Schema schema = setMembershipTableSchema();
+
+    ValidationResult validation = validator.validate(DecisionTableSources.csv(csv), schema);
+    assertTrue(validation.isOk(), () -> "Validation failed: " + validation.issues());
+
+    CompiledRuleset compiled =
+        compiler.compile(DecisionTableSources.csv(csv), CompileOptions.production(schema));
+
+    try (LoadedRuleset indexedRuleset = loader.load(compiled, LoadOptions.memoryMap())) {
+      try (LoadedRuleset linearRuleset =
+          loader.load(compiled, LoadOptions.memoryMap().withPrewarmIndexes(false))) {
+
+        // Values in sets, in no set (fallback), and on blank rows
+        List<Map<String, Object>> testInputs =
+            List.of(
+                Map.of("REGION", "APAC", "TIER", "GOLD"),
+                Map.of("REGION", "EMEA", "TIER", "SILVER"),
+                Map.of("REGION", "US", "TIER", "GOLD"),
+                Map.of("REGION", "ANTARCTICA", "TIER", "BRONZE"));
+
+        for (Map<String, Object> inputValues : testInputs) {
+          DecisionInput input = DecisionInput.of(inputValues);
+
+          DecisionOutput indexedResult = indexedRuleset.evaluate(input);
+          DecisionOutput linearResult = linearRuleset.evaluate(input);
+
+          assertEquals(
+              linearResult.ruleId(),
+              indexedResult.ruleId(),
+              "Rule ID mismatch for input: " + inputValues);
+          assertEquals(
+              linearResult.outputs(),
+              indexedResult.outputs(),
+              "Outputs mismatch for input: " + inputValues);
+        }
+      }
+    }
+  }
+
+  @Test
+  void indexedEvaluationWithNotInOperator(@TempDir Path tempDir) throws IOException {
+    Path csv = writeNotInOperatorTable(tempDir);
+    Schema schema = setMembershipTableSchema();
+
+    ValidationResult validation = validator.validate(DecisionTableSources.csv(csv), schema);
+    assertTrue(validation.isOk(), () -> "Validation failed: " + validation.issues());
+
+    CompiledRuleset compiled =
+        compiler.compile(DecisionTableSources.csv(csv), CompileOptions.production(schema));
+
+    try (LoadedRuleset indexedRuleset = loader.load(compiled, LoadOptions.memoryMap())) {
+      try (LoadedRuleset linearRuleset =
+          loader.load(compiled, LoadOptions.memoryMap().withPrewarmIndexes(false))) {
+
+        // Excluded values, non-excluded values, and values in no exclusion set
+        List<Map<String, Object>> testInputs =
+            List.of(
+                Map.of("REGION", "APAC", "TIER", "GOLD"),
+                Map.of("REGION", "EMEA", "TIER", "GOLD"),
+                Map.of("REGION", "US", "TIER", "SILVER"),
+                Map.of("REGION", "LATAM", "TIER", "BRONZE"));
+
+        for (Map<String, Object> inputValues : testInputs) {
+          DecisionInput input = DecisionInput.of(inputValues);
+
+          DecisionOutput indexedResult = indexedRuleset.evaluate(input);
+          DecisionOutput linearResult = linearRuleset.evaluate(input);
+
+          assertEquals(
+              linearResult.ruleId(),
+              indexedResult.ruleId(),
+              "Rule ID mismatch for input: " + inputValues);
+          assertEquals(
+              linearResult.outputs(),
+              indexedResult.outputs(),
+              "Outputs mismatch for input: " + inputValues);
+        }
+      }
+    }
+  }
+
   // --- Helper methods for creating test tables ---
 
   private Schema equalityTableSchema() {
@@ -479,6 +567,42 @@ class IndexedEvaluationTest {
       writer.write("R1,30,100,HIGH\n"); // VALUE >= 100
       writer.write("R2,20,18,MEDIUM\n"); // VALUE >= 18
       writer.write("R3,10,,LOW\n"); // Fallback
+    }
+    return path;
+  }
+
+  // --- Phase 3: Set membership operator helper methods ---
+
+  private Schema setMembershipTableSchema() {
+    return Schema.builder()
+        .column("REGION", ColumnType.STRING)
+        .column("TIER", ColumnType.STRING)
+        .column("DISCOUNT", ColumnType.DECIMAL)
+        .build();
+  }
+
+  private Path writeInOperatorTable(Path dir) throws IOException {
+    Path path = dir.resolve("in-operator.csv");
+    try (BufferedWriter writer = Files.newBufferedWriter(path, StandardCharsets.UTF_8)) {
+      writer.write("RULE_ID,PRIORITY,REGION,TIER,DISCOUNT\n");
+      writer.write("RULE_ID,PRIORITY,IN,EQ,SET\n");
+      writer.write("R1,40,(APAC,EMEA),GOLD,0.20\n"); // REGION in set AND TIER=GOLD
+      writer.write("R2,30,(US,EMEA),SILVER,0.15\n"); // REGION in set AND TIER=SILVER
+      writer.write("R3,20,(APAC),BRONZE,0.10\n"); // single-value set
+      writer.write("R4,10,,,0.05\n"); // Fallback (blank set matches anything)
+    }
+    return path;
+  }
+
+  private Path writeNotInOperatorTable(Path dir) throws IOException {
+    Path path = dir.resolve("not-in-operator.csv");
+    try (BufferedWriter writer = Files.newBufferedWriter(path, StandardCharsets.UTF_8)) {
+      writer.write("RULE_ID,PRIORITY,REGION,TIER,DISCOUNT\n");
+      writer.write("RULE_ID,PRIORITY,NOT IN,EQ,SET\n");
+      writer.write("R1,40,(APAC,EMEA),GOLD,0.20\n"); // REGION not in set AND TIER=GOLD
+      writer.write("R2,30,(US),GOLD,0.15\n"); // REGION not US AND TIER=GOLD
+      writer.write("R3,20,(LATAM),SILVER,0.10\n"); // REGION not LATAM AND TIER=SILVER
+      writer.write("R4,10,,,0.05\n"); // Fallback
     }
     return path;
   }

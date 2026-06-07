@@ -4,6 +4,7 @@ import in.systemhalted.kisoku.runtime.csv.Operator;
 import in.systemhalted.kisoku.runtime.loader.index.ColumnIndex;
 import in.systemhalted.kisoku.runtime.loader.index.ComparisonIndex;
 import in.systemhalted.kisoku.runtime.loader.index.EqualityIndex;
+import in.systemhalted.kisoku.runtime.loader.index.SetMembershipIndex;
 
 /**
  * Factory for building column indexes based on operator type.
@@ -13,9 +14,10 @@ import in.systemhalted.kisoku.runtime.loader.index.EqualityIndex;
  * <ul>
  *   <li>EQ - via {@link EqualityIndex} (hash-based)
  *   <li>GT, GTE, LT, LTE - via {@link ComparisonIndex} (sorted array with binary search)
+ *   <li>IN, NOT_IN - via {@link SetMembershipIndex} (inverted index, blanks tracked separately)
  * </ul>
  *
- * <p>Future phases will add BETWEEN, IN, and other operators.
+ * <p>Future phases will add BETWEEN and other operators.
  */
 final class ColumnIndexBuilder {
   private ColumnIndexBuilder() {}
@@ -41,7 +43,6 @@ final class ColumnIndexBuilder {
 
     Operator op = column.operator();
 
-    // Phase 1: Only support EQ operator
     return switch (decoder) {
       case ScalarColumnDecoder scalarDecoder ->
           switch (op) {
@@ -55,9 +56,21 @@ final class ColumnIndexBuilder {
 
                 // Future phases will add:
                 // - RangeIntervalIndex for BETWEEN_*, NOT_BETWEEN_*
-                // - SetMembershipIndex for IN, NOT_IN
 
                 null;
+          };
+
+      case SetMembershipColumnDecoder setMembershipColDecoder ->
+          switch (op) {
+            case IN, NOT_IN ->
+                SetMembershipIndex.build(
+                    setMembershipColDecoder.listOffsets(),
+                    setMembershipColDecoder.listLengths(),
+                    setMembershipColDecoder.allValues(),
+                    setMembershipColDecoder.presenceBitmap(),
+                    op,
+                    rowCount);
+            case null, default -> null;
           };
 
       default -> null;
