@@ -76,6 +76,44 @@ class FileBackedLoadTest {
   }
 
   @Test
+  void concurrentEvaluationOnMappedRulesetIsConsistent(@TempDir Path tempDir) throws Exception {
+    CompiledRuleset compiled = compileSample(tempDir);
+    Path artifact = tempDir.resolve("ruleset.kss");
+    compiled.writeTo(artifact);
+
+    DecisionInput input = DecisionInput.of(Map.of("REGION", "APAC", "AGE", 40));
+
+    try (LoadedRuleset fromFile = loader.load(artifact, LoadOptions.memoryMap())) {
+      String expected = fromFile.evaluate(input).ruleId();
+
+      // Many threads share one mapped buffer; decoders read it via absolute offsets, so concurrent
+      // evaluation must be consistent without any synchronization.
+      int threads = 16;
+      int iterationsPerThread = 2_000;
+      var pool = java.util.concurrent.Executors.newFixedThreadPool(threads);
+      try {
+        var tasks = new java.util.ArrayList<java.util.concurrent.Callable<Boolean>>();
+        for (int t = 0; t < threads; t++) {
+          tasks.add(
+              () -> {
+                for (int i = 0; i < iterationsPerThread; i++) {
+                  if (!expected.equals(fromFile.evaluate(input).ruleId())) {
+                    return false;
+                  }
+                }
+                return true;
+              });
+        }
+        for (var future : pool.invokeAll(tasks)) {
+          assertTrue(future.get(), "concurrent evaluation produced an inconsistent result");
+        }
+      } finally {
+        pool.shutdownNow();
+      }
+    }
+  }
+
+  @Test
   void closeIsIdempotent(@TempDir Path tempDir) throws IOException {
     CompiledRuleset compiled = compileSample(tempDir);
     Path artifact = tempDir.resolve("ruleset.kss");

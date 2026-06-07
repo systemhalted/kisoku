@@ -18,7 +18,6 @@ import in.systemhalted.kisoku.testutil.MemoryTestUtils.MemorySnapshot;
 import java.io.IOException;
 import java.nio.file.Path;
 import org.junit.jupiter.api.Assumptions;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -129,16 +128,21 @@ class OffHeapMemoryTest {
   }
 
   /**
-   * Verifies heap growth is minimal when using memory-mapped loading.
+   * Verifies that the table's column data stays off-heap when memory-mapped, by comparing against
+   * an on-heap load of the same artifact file.
    *
-   * <p>With off-heap storage, heap growth should be much smaller than the actual data size. This
-   * allows handling large tables without heap pressure.
+   * <p>Both loads use {@code prewarmIndexes(false)} so the measurement isolates the column data
+   * from the optional, heap-resident bitmap indexes. The on-heap load reads the whole artifact onto
+   * the heap, so its heap growth is at least the artifact size; the memory-mapped load reads column
+   * data lazily through the mapping, so it keeps almost none of the artifact on the heap. The
+   * difference between the two heap deltas — measured identically in the same run — is the artifact
+   * NOT being on the heap under mapping. (A mapped buffer lives in the JVM's "mapped" pool, not the
+   * "direct" pool, so it shows up as neither heap nor direct usage.)
    */
   @Tag("memory")
   @Tag("scale")
   @Test
-  @Disabled("Off-heap memory-mapped loading not yet implemented - loader is currently a stub")
-  void heapGrowthMinimalWithMemoryMap(@TempDir Path tempDir) throws IOException {
+  void mappedLoadKeepsArtifactOffHeapVersusOnHeap(@TempDir Path tempDir) throws IOException {
     Assumptions.assumeTrue(
         Boolean.getBoolean("kisoku.runMemoryTests") || Boolean.getBoolean("kisoku.runScaleTests"),
         "Set -Dkisoku.runMemoryTests=true or -Dkisoku.runScaleTests=true to enable this test.");
@@ -150,38 +154,50 @@ class OffHeapMemoryTest {
     Path csv = DecisionTableFixtures.writeLargeTable(tempDir, rows, inputColumns, outputColumns);
     Schema schema = DecisionTableFixtures.largeTableSchema(inputColumns, outputColumns);
 
-    // Estimate raw data size (rough approximation)
-    long estimatedDataSize = rows * (inputColumns + outputColumns) * 10; // ~10 bytes per cell
-
     CompiledRuleset compiled =
         compiler.compile(
             DecisionTableSources.csv(csv),
             CompileOptions.production(schema).withRuleSelection(RuleSelectionPolicy.AUTO));
 
-    MemorySnapshot beforeLoad = MemoryTestUtils.stableSnapshot();
+    Path artifact = tempDir.resolve("ruleset.kss");
+    compiled.writeTo(artifact);
+    long artifactSize = java.nio.file.Files.size(artifact);
 
-    try (LoadedRuleset ruleset = loader.load(compiled, LoadOptions.memoryMap())) {
-      MemorySnapshot afterLoad = MemoryTestUtils.stableSnapshot();
+    long mappedHeapDelta =
+        heapDeltaForLoad(artifact, LoadOptions.memoryMap().withPrewarmIndexes(false));
+    long onHeapDelta = heapDeltaForLoad(artifact, LoadOptions.onHeap().withPrewarmIndexes(false));
 
-      long heapDelta = afterLoad.heapBytes() - beforeLoad.heapBytes();
-      double heapRatio = (double) heapDelta / estimatedDataSize;
+    System.out.printf(
+        "Artifact: %s | onHeap heap delta: %s | mapped heap delta: %s%n",
+        MemoryTestUtils.formatBytes(artifactSize),
+        MemoryTestUtils.formatBytes(onHeapDelta),
+        MemoryTestUtils.formatBytes(mappedHeapDelta));
 
-      System.out.printf(
-          "Heap delta: %s, Estimated data size: %s, Ratio: %.2f%%%n",
-          MemoryTestUtils.formatBytes(heapDelta),
-          MemoryTestUtils.formatBytes(estimatedDataSize),
-          heapRatio * 100);
+    // The on-heap load must hold most of the artifact on the heap.
+    assertTrue(
+        onHeapDelta > artifactSize / 2,
+        String.format(
+            "Expected on-heap load to retain most of the %s artifact on heap, but heap grew only %s",
+            MemoryTestUtils.formatBytes(artifactSize), MemoryTestUtils.formatBytes(onHeapDelta)));
 
-      // Heap growth should be less than 20% of data size for memory-mapped mode
-      // This threshold allows for metadata, indexes, and JVM overhead
-      assertTrue(
-          heapRatio < 0.20,
-          String.format(
-              "Heap growth ratio %.2f%% exceeds 20%% threshold for memory-mapped mode. "
-                  + "Heap delta: %s, Data size: %s",
-              heapRatio * 100,
-              MemoryTestUtils.formatBytes(heapDelta),
-              MemoryTestUtils.formatBytes(estimatedDataSize)));
+    // The mapped load must avoid putting the artifact on the heap: it should save at least half the
+    // artifact size of heap relative to the on-heap load.
+    assertTrue(
+        onHeapDelta - mappedHeapDelta > artifactSize / 2,
+        String.format(
+            "Memory-mapped load did not keep the artifact off-heap. onHeap delta: %s, mapped delta: "
+                + "%s, artifact: %s",
+            MemoryTestUtils.formatBytes(onHeapDelta),
+            MemoryTestUtils.formatBytes(mappedHeapDelta),
+            MemoryTestUtils.formatBytes(artifactSize)));
+  }
+
+  /** Loads the artifact with the given options and returns the stabilized heap growth in bytes. */
+  private long heapDeltaForLoad(Path artifact, LoadOptions options) throws IOException {
+    MemorySnapshot before = MemoryTestUtils.stableSnapshot();
+    try (LoadedRuleset ruleset = loader.load(artifact, options)) {
+      MemorySnapshot after = MemoryTestUtils.stableSnapshot();
+      return after.heapBytes() - before.heapBytes();
     }
   }
 }
