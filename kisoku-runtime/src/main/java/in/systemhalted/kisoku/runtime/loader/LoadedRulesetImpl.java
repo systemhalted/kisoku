@@ -27,6 +27,7 @@ final class LoadedRulesetImpl implements LoadedRuleset {
   private final List<ColumnDecoder> decoders;
   private final int[] ruleOrder;
   private final ByteBuffer directBuffer; // For cleanup if memory-mapped
+  private final AutoCloseable resource; // Backing file channel for mapped loads, or null
 
   // Pre-computed indices for evaluation efficiency
   private final int[] inputColumnIndices;
@@ -46,11 +47,24 @@ final class LoadedRulesetImpl implements LoadedRuleset {
       ByteBuffer directBuffer,
       List<ColumnIndex> columnIndexes,
       StringDictionaryReader dictionary) {
+    this(metadata, columns, decoders, ruleOrder, directBuffer, null, columnIndexes, dictionary);
+  }
+
+  LoadedRulesetImpl(
+      RulesetMetadata metadata,
+      List<ColumnDefinition> columns,
+      List<ColumnDecoder> decoders,
+      int[] ruleOrder,
+      ByteBuffer directBuffer,
+      AutoCloseable resource,
+      List<ColumnIndex> columnIndexes,
+      StringDictionaryReader dictionary) {
     this.metadata = metadata;
     this.columns = List.copyOf(columns);
     this.decoders = List.copyOf(decoders);
     this.ruleOrder = ruleOrder.clone();
     this.directBuffer = directBuffer;
+    this.resource = resource;
     // Use unmodifiableList since columnIndexes may contain nulls (non-indexed columns)
     this.columnIndexes =
         columnIndexes != null ? Collections.unmodifiableList(new ArrayList<>(columnIndexes)) : null;
@@ -237,8 +251,16 @@ final class LoadedRulesetImpl implements LoadedRuleset {
 
   @Override
   public void close() {
-    // For memory-mapped buffers, we rely on GC to clean up
-    // Direct ByteBuffers created via allocateDirect will be garbage collected
-    // No explicit action needed here as we don't use sun.misc.Cleaner
+    // Close the backing file channel for memory-mapped loads. The mapping itself has no public
+    // unmap; we drop our references and let the Cleaner associated with the mapped buffer release
+    // it on GC (we deliberately avoid sun.misc.Unsafe.invokeCleaner, which is hostile to JPMS).
+    // FileChannel.close() is idempotent, so calling close() twice is safe.
+    if (resource != null) {
+      try {
+        resource.close();
+      } catch (Exception e) {
+        // Best-effort cleanup; nothing actionable if the channel fails to close.
+      }
+    }
   }
 }

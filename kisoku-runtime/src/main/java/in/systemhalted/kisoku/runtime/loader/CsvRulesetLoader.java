@@ -1,12 +1,18 @@
 package in.systemhalted.kisoku.runtime.loader;
 
+import in.systemhalted.kisoku.api.RulesetMetadata;
 import in.systemhalted.kisoku.api.compilation.CompiledRuleset;
 import in.systemhalted.kisoku.api.loading.LoadOptions;
 import in.systemhalted.kisoku.api.loading.LoadedRuleset;
 import in.systemhalted.kisoku.api.loading.RulesetLoader;
+import in.systemhalted.kisoku.runtime.csv.Operator;
 import in.systemhalted.kisoku.runtime.loader.index.ColumnIndex;
+import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.nio.channels.FileChannel;
+import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -34,6 +40,71 @@ public final class CsvRulesetLoader implements RulesetLoader {
     } else {
       return loadOnHeap(bytes, compiled, options);
     }
+  }
+
+  @Override
+  public LoadedRuleset load(Path artifact, LoadOptions options) throws IOException {
+    if (!options.isMemoryMap()) {
+      // On-heap load from a file: read the bytes and reuse the in-memory path.
+      byte[] bytes = java.nio.file.Files.readAllBytes(artifact);
+      ByteBuffer buffer = ByteBuffer.wrap(bytes).order(ByteOrder.BIG_ENDIAN);
+      return buildLoadedRuleset(buffer, null, options);
+    }
+
+    // Memory-mapped load: map the file read-only and keep the channel open for cleanup. The mapped
+    // buffer is never copied to the heap; decoders read column data through it via absolute
+    // offsets.
+    FileChannel channel = FileChannel.open(artifact, StandardOpenOption.READ);
+    try {
+      ByteBuffer mapped =
+          channel.map(FileChannel.MapMode.READ_ONLY, 0, channel.size()).order(ByteOrder.BIG_ENDIAN);
+      return buildLoadedRuleset(mapped, channel, options);
+    } catch (RuntimeException | IOException e) {
+      channel.close();
+      throw e;
+    }
+  }
+
+  private LoadedRuleset buildLoadedRuleset(
+      ByteBuffer buffer, AutoCloseable resource, LoadOptions options) {
+    BinaryArtifactReader reader = BinaryArtifactReader.read(buffer);
+
+    List<ColumnIndex> indexes = null;
+    StringDictionaryReader dictionary = null;
+    if (options.isPrewarmIndexes()) {
+      indexes = buildIndexes(reader.columns(), reader.decoders(), reader.rowCount());
+      dictionary = reader.dictionary();
+    }
+
+    return new LoadedRulesetImpl(
+        buildMetadata(reader),
+        reader.columns(),
+        reader.decoders(),
+        reader.ruleOrder(),
+        buffer.isDirect() ? buffer : null,
+        resource,
+        indexes,
+        dictionary);
+  }
+
+  /** Reconstructs ruleset metadata from a parsed artifact (used when loading from a file). */
+  private RulesetMetadata buildMetadata(BinaryArtifactReader reader) {
+    List<String> inputColumns = new ArrayList<>();
+    List<String> outputColumns = new ArrayList<>();
+    String priorityColumn = null;
+
+    for (ColumnDefinition col : reader.columns()) {
+      if (col.operator() == Operator.PRIORITY) {
+        priorityColumn = col.name();
+      } else if (col.isOutput()) {
+        outputColumns.add(col.name());
+      } else if (col.isInput()) {
+        inputColumns.add(col.name());
+      }
+    }
+
+    return new RulesetMetadata(
+        reader.rowCount(), inputColumns, outputColumns, priorityColumn, reader.artifactKind());
   }
 
   private LoadedRuleset loadOnHeap(byte[] bytes, CompiledRuleset compiled, LoadOptions options) {
