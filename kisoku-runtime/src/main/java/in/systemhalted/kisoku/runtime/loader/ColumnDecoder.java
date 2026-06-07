@@ -40,20 +40,26 @@ sealed interface ColumnDecoder
    * Factory method to create the appropriate decoder for a column.
    *
    * @param column the column definition
-   * @param data ByteBuffer positioned at the column's data
+   * @param buffer the artifact buffer (read via absolute offsets)
+   * @param base absolute byte offset of this column's data within the buffer
    * @param rowCount number of rows
    * @param dictionary the string dictionary
    * @return the appropriate decoder
    */
   static ColumnDecoder create(
-      ColumnDefinition column, ByteBuffer data, int rowCount, StringDictionaryReader dictionary) {
+      ColumnDefinition column,
+      ByteBuffer buffer,
+      int base,
+      int rowCount,
+      StringDictionaryReader dictionary) {
     Operator op = column.operator();
     return switch (op) {
       case RULE_ID, PRIORITY, SET, EQ, NE, GT, GTE, LT, LTE ->
-          ScalarColumnDecoder.create(column, data, rowCount, dictionary);
+          ScalarColumnDecoder.create(column, buffer, base, rowCount, dictionary);
       case BETWEEN_INCLUSIVE, BETWEEN_EXCLUSIVE, NOT_BETWEEN_INCLUSIVE, NOT_BETWEEN_EXCLUSIVE ->
-          RangeColumnDecoder.create(column, data, rowCount, dictionary);
-      case IN, NOT_IN -> SetMembershipColumnDecoder.create(column, data, rowCount, dictionary);
+          RangeColumnDecoder.create(column, buffer, base, rowCount, dictionary);
+      case IN, NOT_IN ->
+          SetMembershipColumnDecoder.create(column, buffer, base, rowCount, dictionary);
     };
   }
 }

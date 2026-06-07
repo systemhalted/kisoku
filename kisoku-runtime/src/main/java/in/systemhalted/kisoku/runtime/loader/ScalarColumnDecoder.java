@@ -8,42 +8,61 @@ import java.nio.ByteBuffer;
  *
  * <p>Handles operators: RULE_ID, PRIORITY, SET, EQ, NE, GT, GTE, LT, LTE
  *
- * <p>Format:
+ * <p>Format (within the column's slice of the artifact buffer):
  *
  * <pre>
  * presence_bitmap (ceil(row_count/8) bytes)
  * values[row_count] (4 bytes each)
  * </pre>
+ *
+ * <p>Values are read lazily through the buffer using absolute offsets so the column data stays in
+ * the (possibly off-heap or memory-mapped) buffer rather than being copied onto the heap. Absolute
+ * reads do not touch the buffer's position, so a shared buffer is safe for concurrent evaluation.
  */
 final class ScalarColumnDecoder implements ColumnDecoder {
   private final ColumnDefinition column;
-  private final byte[] presenceBitmap;
-  private final int[] values;
+  private final ByteBuffer buffer;
+  private final int bitmapBase;
+  private final int valuesBase;
+  private final int rowCount;
   private final StringDictionaryReader dictionary;
 
   private ScalarColumnDecoder(
       ColumnDefinition column,
-      byte[] presenceBitmap,
-      int[] values,
+      ByteBuffer buffer,
+      int bitmapBase,
+      int valuesBase,
+      int rowCount,
       StringDictionaryReader dictionary) {
     this.column = column;
-    this.presenceBitmap = presenceBitmap;
-    this.values = values;
+    this.buffer = buffer;
+    this.bitmapBase = bitmapBase;
+    this.valuesBase = valuesBase;
+    this.rowCount = rowCount;
     this.dictionary = dictionary;
   }
 
+  /**
+   * Creates a decoder over the column's data located at an absolute byte offset in the buffer.
+   *
+   * @param column the column definition
+   * @param buffer the artifact buffer
+   * @param base absolute byte offset of this column's data
+   * @param rowCount number of rows
+   * @param dictionary the string dictionary
+   */
   static ScalarColumnDecoder create(
-      ColumnDefinition column, ByteBuffer data, int rowCount, StringDictionaryReader dictionary) {
-    int bitmapSize = BitMapUtils.bitmapSize(rowCount);
-    byte[] bitmap = new byte[bitmapSize];
-    data.get(bitmap);
+      ColumnDefinition column,
+      ByteBuffer buffer,
+      int base,
+      int rowCount,
+      StringDictionaryReader dictionary) {
+    int valuesBase = base + BitMapUtils.bitmapSize(rowCount);
+    return new ScalarColumnDecoder(column, buffer, base, valuesBase, rowCount, dictionary);
+  }
 
-    int[] values = new int[rowCount];
-    for (int i = 0; i < rowCount; i++) {
-      values[i] = data.getInt();
-    }
-
-    return new ScalarColumnDecoder(column, bitmap, values, dictionary);
+  private int valueAt(int rowIndex) {
+    return buffer.getInt(valuesBase + rowIndex * 4);
   }
 
   @Override
@@ -52,7 +71,7 @@ final class ScalarColumnDecoder implements ColumnDecoder {
       return true; // Blank = no condition, always matches
     }
 
-    int storedValue = values[rowIndex];
+    int storedValue = valueAt(rowIndex);
     int inputInt = TypeCoercion.toComparableInt(inputValue, column.type(), dictionary);
 
     Operator op = column.operator();
@@ -69,7 +88,7 @@ final class ScalarColumnDecoder implements ColumnDecoder {
 
   @Override
   public boolean hasCondition(int rowIndex) {
-    return BitMapUtils.isPresent(presenceBitmap, rowIndex);
+    return BitMapUtils.isPresent(buffer, bitmapBase, rowIndex);
   }
 
   @Override
@@ -77,27 +96,36 @@ final class ScalarColumnDecoder implements ColumnDecoder {
     if (!hasCondition(rowIndex)) {
       return null;
     }
-    int storedValue = values[rowIndex];
-    return TypeCoercion.decodeValue(storedValue, column.type(), dictionary);
+    return TypeCoercion.decodeValue(valueAt(rowIndex), column.type(), dictionary);
   }
 
-  // Package-private accessors for index building
+  // Package-private accessors for index building. These materialize the column's raw data from the
+  // buffer on demand; they are used once at load time and the arrays are not retained.
 
   /**
-   * Get the underlying values array for index building.
+   * Materializes the values array for index building.
    *
    * @return the values array (one int per row)
    */
   int[] values() {
-    return values;
+    int[] out = new int[rowCount];
+    for (int i = 0; i < rowCount; i++) {
+      out[i] = valueAt(i);
+    }
+    return out;
   }
 
   /**
-   * Get the presence bitmap for index building.
+   * Materializes the presence bitmap for index building.
    *
    * @return the presence bitmap (MSB-first encoding)
    */
   byte[] presenceBitmap() {
-    return presenceBitmap;
+    int size = BitMapUtils.bitmapSize(rowCount);
+    byte[] out = new byte[size];
+    for (int i = 0; i < size; i++) {
+      out[i] = buffer.get(bitmapBase + i);
+    }
+    return out;
   }
 }

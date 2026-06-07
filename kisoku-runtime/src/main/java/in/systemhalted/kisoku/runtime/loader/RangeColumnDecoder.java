@@ -9,51 +9,58 @@ import java.nio.ByteBuffer;
  * <p>Handles operators: BETWEEN_INCLUSIVE, BETWEEN_EXCLUSIVE, NOT_BETWEEN_INCLUSIVE,
  * NOT_BETWEEN_EXCLUSIVE
  *
- * <p>Format:
+ * <p>Format (within the column's slice of the artifact buffer):
  *
  * <pre>
  * presence_bitmap (ceil(row_count/8) bytes)
  * min_values[row_count] (4 bytes each)
  * max_values[row_count] (4 bytes each)
  * </pre>
+ *
+ * <p>Values are read lazily through the buffer using absolute offsets (no on-heap copy, position
+ * independent, safe for concurrent evaluation).
  */
 final class RangeColumnDecoder implements ColumnDecoder {
   private final ColumnDefinition column;
-  private final byte[] presenceBitmap;
-  private final int[] minValues;
-  private final int[] maxValues;
+  private final ByteBuffer buffer;
+  private final int bitmapBase;
+  private final int minBase;
+  private final int maxBase;
   private final StringDictionaryReader dictionary;
 
   private RangeColumnDecoder(
       ColumnDefinition column,
-      byte[] presenceBitmap,
-      int[] minValues,
-      int[] maxValues,
+      ByteBuffer buffer,
+      int bitmapBase,
+      int minBase,
+      int maxBase,
       StringDictionaryReader dictionary) {
     this.column = column;
-    this.presenceBitmap = presenceBitmap;
-    this.minValues = minValues;
-    this.maxValues = maxValues;
+    this.buffer = buffer;
+    this.bitmapBase = bitmapBase;
+    this.minBase = minBase;
+    this.maxBase = maxBase;
     this.dictionary = dictionary;
   }
 
+  /**
+   * Creates a decoder over the column's data located at an absolute byte offset in the buffer.
+   *
+   * @param column the column definition
+   * @param buffer the artifact buffer
+   * @param base absolute byte offset of this column's data
+   * @param rowCount number of rows
+   * @param dictionary the string dictionary
+   */
   static RangeColumnDecoder create(
-      ColumnDefinition column, ByteBuffer data, int rowCount, StringDictionaryReader dictionary) {
-    int bitmapSize = BitMapUtils.bitmapSize(rowCount);
-    byte[] bitmap = new byte[bitmapSize];
-    data.get(bitmap);
-
-    int[] minValues = new int[rowCount];
-    for (int i = 0; i < rowCount; i++) {
-      minValues[i] = data.getInt();
-    }
-
-    int[] maxValues = new int[rowCount];
-    for (int i = 0; i < rowCount; i++) {
-      maxValues[i] = data.getInt();
-    }
-
-    return new RangeColumnDecoder(column, bitmap, minValues, maxValues, dictionary);
+      ColumnDefinition column,
+      ByteBuffer buffer,
+      int base,
+      int rowCount,
+      StringDictionaryReader dictionary) {
+    int minBase = base + BitMapUtils.bitmapSize(rowCount);
+    int maxBase = minBase + rowCount * 4;
+    return new RangeColumnDecoder(column, buffer, base, minBase, maxBase, dictionary);
   }
 
   @Override
@@ -62,8 +69,8 @@ final class RangeColumnDecoder implements ColumnDecoder {
       return true; // Blank = no condition, always matches
     }
 
-    int min = minValues[rowIndex];
-    int max = maxValues[rowIndex];
+    int min = buffer.getInt(minBase + rowIndex * 4);
+    int max = buffer.getInt(maxBase + rowIndex * 4);
     int inputInt = TypeCoercion.toComparableInt(inputValue, column.type(), dictionary);
 
     Operator op = column.operator();
@@ -78,7 +85,7 @@ final class RangeColumnDecoder implements ColumnDecoder {
 
   @Override
   public boolean hasCondition(int rowIndex) {
-    return BitMapUtils.isPresent(presenceBitmap, rowIndex);
+    return BitMapUtils.isPresent(buffer, bitmapBase, rowIndex);
   }
 
   @Override

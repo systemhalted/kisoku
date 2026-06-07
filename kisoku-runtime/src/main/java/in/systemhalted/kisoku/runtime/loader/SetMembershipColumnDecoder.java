@@ -6,7 +6,7 @@ import java.nio.ByteBuffer;
 /**
  * Decodes and matches set membership column data (IN, NOT_IN operators).
  *
- * <p>Format:
+ * <p>Format (within the column's slice of the artifact buffer):
  *
  * <pre>
  * presence_bitmap (ceil(row_count/8) bytes)
@@ -14,61 +14,71 @@ import java.nio.ByteBuffer;
  * list_lengths[row_count] (2 bytes each)
  * all_values[] (4 bytes each)
  * </pre>
+ *
+ * <p>Values are read lazily through the buffer using absolute offsets (no on-heap copy, position
+ * independent, safe for concurrent evaluation).
  */
 final class SetMembershipColumnDecoder implements ColumnDecoder {
   private final ColumnDefinition column;
-  private final byte[] presenceBitmap;
-  private final int[] listOffsets;
-  private final short[] listLengths;
-  private final int[] allValues;
+  private final ByteBuffer buffer;
+  private final int bitmapBase;
+  private final int offsetsBase;
+  private final int lengthsBase;
+  private final int valuesBase;
+  private final int rowCount;
   private final StringDictionaryReader dictionary;
 
   private SetMembershipColumnDecoder(
       ColumnDefinition column,
-      byte[] presenceBitmap,
-      int[] listOffsets,
-      short[] listLengths,
-      int[] allValues,
+      ByteBuffer buffer,
+      int bitmapBase,
+      int offsetsBase,
+      int lengthsBase,
+      int valuesBase,
+      int rowCount,
       StringDictionaryReader dictionary) {
     this.column = column;
-    this.presenceBitmap = presenceBitmap;
-    this.listOffsets = listOffsets;
-    this.listLengths = listLengths;
-    this.allValues = allValues;
+    this.buffer = buffer;
+    this.bitmapBase = bitmapBase;
+    this.offsetsBase = offsetsBase;
+    this.lengthsBase = lengthsBase;
+    this.valuesBase = valuesBase;
+    this.rowCount = rowCount;
     this.dictionary = dictionary;
   }
 
+  /**
+   * Creates a decoder over the column's data located at an absolute byte offset in the buffer.
+   *
+   * @param column the column definition
+   * @param buffer the artifact buffer
+   * @param base absolute byte offset of this column's data
+   * @param rowCount number of rows
+   * @param dictionary the string dictionary
+   */
   static SetMembershipColumnDecoder create(
-      ColumnDefinition column, ByteBuffer data, int rowCount, StringDictionaryReader dictionary) {
-    int bitmapSize = BitMapUtils.bitmapSize(rowCount);
-    byte[] bitmap = new byte[bitmapSize];
-    data.get(bitmap);
+      ColumnDefinition column,
+      ByteBuffer buffer,
+      int base,
+      int rowCount,
+      StringDictionaryReader dictionary) {
+    int offsetsBase = base + BitMapUtils.bitmapSize(rowCount);
+    int lengthsBase = offsetsBase + rowCount * 4;
+    int valuesBase = lengthsBase + rowCount * 2;
+    return new SetMembershipColumnDecoder(
+        column, buffer, base, offsetsBase, lengthsBase, valuesBase, rowCount, dictionary);
+  }
 
-    int[] offsets = new int[rowCount];
-    for (int i = 0; i < rowCount; i++) {
-      offsets[i] = data.getInt();
-    }
+  private int listOffset(int rowIndex) {
+    return buffer.getInt(offsetsBase + rowIndex * 4);
+  }
 
-    short[] lengths = new short[rowCount];
-    for (int i = 0; i < rowCount; i++) {
-      lengths[i] = data.getShort();
-    }
+  private int listLength(int rowIndex) {
+    return buffer.getShort(lengthsBase + rowIndex * 2) & 0xFFFF;
+  }
 
-    // Calculate total values count
-    int totalValues = 0;
-    for (int i = 0; i < rowCount; i++) {
-      int end = offsets[i] + (lengths[i] & 0xFFFF);
-      if (end > totalValues) {
-        totalValues = end;
-      }
-    }
-
-    int[] allValues = new int[totalValues];
-    for (int i = 0; i < totalValues; i++) {
-      allValues[i] = data.getInt();
-    }
-
-    return new SetMembershipColumnDecoder(column, bitmap, offsets, lengths, allValues, dictionary);
+  private int setValue(int index) {
+    return buffer.getInt(valuesBase + index * 4);
   }
 
   @Override
@@ -77,13 +87,13 @@ final class SetMembershipColumnDecoder implements ColumnDecoder {
       return true; // Blank = no condition, always matches
     }
 
-    int offset = listOffsets[rowIndex];
-    int length = listLengths[rowIndex] & 0xFFFF;
+    int offset = listOffset(rowIndex);
+    int length = listLength(rowIndex);
     int inputInt = TypeCoercion.toComparableInt(inputValue, column.type(), dictionary);
 
     boolean found = false;
     for (int i = 0; i < length; i++) {
-      if (allValues[offset + i] == inputInt) {
+      if (setValue(offset + i) == inputInt) {
         found = true;
         break;
       }
@@ -94,7 +104,7 @@ final class SetMembershipColumnDecoder implements ColumnDecoder {
 
   @Override
   public boolean hasCondition(int rowIndex) {
-    return BitMapUtils.isPresent(presenceBitmap, rowIndex);
+    return BitMapUtils.isPresent(buffer, bitmapBase, rowIndex);
   }
 
   @Override
@@ -103,20 +113,52 @@ final class SetMembershipColumnDecoder implements ColumnDecoder {
     return null;
   }
 
-  // Package-private accessors for index building
+  // Package-private accessors for index building. These materialize the column's raw data from the
+  // buffer on demand; they are used once at load time and the arrays are not retained.
+
   byte[] presenceBitmap() {
-    return presenceBitmap;
+    int size = BitMapUtils.bitmapSize(rowCount);
+    byte[] out = new byte[size];
+    for (int i = 0; i < size; i++) {
+      out[i] = buffer.get(bitmapBase + i);
+    }
+    return out;
   }
 
   int[] listOffsets() {
-    return listOffsets;
+    int[] out = new int[rowCount];
+    for (int i = 0; i < rowCount; i++) {
+      out[i] = listOffset(i);
+    }
+    return out;
   }
 
   short[] listLengths() {
-    return listLengths;
+    short[] out = new short[rowCount];
+    for (int i = 0; i < rowCount; i++) {
+      out[i] = buffer.getShort(lengthsBase + i * 2);
+    }
+    return out;
   }
 
   int[] allValues() {
-    return allValues;
+    int total = totalValues();
+    int[] out = new int[total];
+    for (int i = 0; i < total; i++) {
+      out[i] = setValue(i);
+    }
+    return out;
+  }
+
+  /** Number of entries in the packed all_values array (max offset+length across rows). */
+  private int totalValues() {
+    int total = 0;
+    for (int i = 0; i < rowCount; i++) {
+      int end = listOffset(i) + listLength(i);
+      if (end > total) {
+        total = end;
+      }
+    }
+    return total;
   }
 }

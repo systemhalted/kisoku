@@ -136,16 +136,18 @@ final class BinaryArtifactReader {
     List<ColumnDefinition> columns =
         readColumnDefinitions(buffer, columnsOffset, columnCount, dictionary);
 
-    // Read column data and create decoders (columns are stored sequentially)
-    buffer.position(dataOffset);
+    // Create decoders from each column's absolute base (data_offset is relative to the rule-data
+    // section). Decoders read lazily through the buffer; no column data is copied onto the heap.
     List<ColumnDecoder> decoders = new ArrayList<>(columnCount);
+    int dataSectionEnd = dataOffset;
     for (ColumnDefinition col : columns) {
-      ColumnDecoder decoder = createDecoder(col, buffer, rowCount, dictionary);
-      decoders.add(decoder);
+      int base = dataOffset + col.dataOffset();
+      decoders.add(createDecoder(col, buffer, base, rowCount, dictionary));
+      dataSectionEnd = Math.max(dataSectionEnd, base + columnDataSize(col, buffer, base, rowCount));
     }
 
-    // Rule order is at current position after reading all column data
-    int[] ruleOrder = readRuleOrder(buffer, rowCount);
+    // The rule order index immediately follows the rule-data section.
+    int[] ruleOrder = readRuleOrder(buffer, dataSectionEnd, rowCount);
 
     return new BinaryArtifactReader(
         buffer,
@@ -163,14 +165,39 @@ final class BinaryArtifactReader {
   }
 
   private static ColumnDecoder createDecoder(
-      ColumnDefinition column, ByteBuffer data, int rowCount, StringDictionaryReader dictionary) {
-    Operator op = column.operator();
-    return switch (op) {
-      case RULE_ID, PRIORITY, SET, EQ, NE, GT, GTE, LT, LTE ->
-          ScalarColumnDecoder.create(column, data, rowCount, dictionary);
+      ColumnDefinition column,
+      ByteBuffer buffer,
+      int base,
+      int rowCount,
+      StringDictionaryReader dictionary) {
+    return ColumnDecoder.create(column, buffer, base, rowCount, dictionary);
+  }
+
+  /**
+   * Computes the encoded byte size of a column's data, used to locate the end of the rule-data
+   * section (where the rule order index begins). Scalar and range sizes are formulaic; set columns
+   * additionally depend on the packed all_values length, derived from the per-row offsets/lengths.
+   */
+  private static int columnDataSize(
+      ColumnDefinition column, ByteBuffer buffer, int base, int rowCount) {
+    int bitmapSize = BitMapUtils.bitmapSize(rowCount);
+    return switch (column.operator()) {
       case BETWEEN_INCLUSIVE, BETWEEN_EXCLUSIVE, NOT_BETWEEN_INCLUSIVE, NOT_BETWEEN_EXCLUSIVE ->
-          RangeColumnDecoder.create(column, data, rowCount, dictionary);
-      case IN, NOT_IN -> SetMembershipColumnDecoder.create(column, data, rowCount, dictionary);
+          bitmapSize + rowCount * 4 * 2;
+      case IN, NOT_IN -> {
+        int offsetsBase = base + bitmapSize;
+        int lengthsBase = offsetsBase + rowCount * 4;
+        int totalValues = 0;
+        for (int i = 0; i < rowCount; i++) {
+          int end =
+              buffer.getInt(offsetsBase + i * 4) + (buffer.getShort(lengthsBase + i * 2) & 0xFFFF);
+          if (end > totalValues) {
+            totalValues = end;
+          }
+        }
+        yield bitmapSize + rowCount * 4 + rowCount * 2 + totalValues * 4;
+      }
+      default -> bitmapSize + rowCount * 4;
     };
   }
 
@@ -199,11 +226,13 @@ final class BinaryArtifactReader {
     return List.copyOf(columns);
   }
 
-  private static int[] readRuleOrder(ByteBuffer buffer, int rowCount) {
-    int orderType = buffer.get() & 0xFF;
+  private static int[] readRuleOrder(ByteBuffer buffer, int offset, int rowCount) {
+    int pos = offset;
+    pos += 1; // order_type byte (unused here; evaluation order is the stored sequence)
     int[] order = new int[rowCount];
     for (int i = 0; i < rowCount; i++) {
-      order[i] = buffer.getInt();
+      order[i] = buffer.getInt(pos);
+      pos += 4;
     }
     return order;
   }

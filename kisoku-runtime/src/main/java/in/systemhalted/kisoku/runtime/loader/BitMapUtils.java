@@ -1,5 +1,7 @@
 package in.systemhalted.kisoku.runtime.loader;
 
+import java.nio.ByteBuffer;
+
 /** Utility methods for presence bitmap operations. */
 final class BitMapUtils {
   private BitMapUtils() {}
@@ -15,6 +17,22 @@ final class BitMapUtils {
     int byteIndex = rowIndex / 8;
     int bitIndex = 7 - (rowIndex % 8); // MSB-first
     return (bitmap[byteIndex] & (1 << bitIndex)) != 0;
+  }
+
+  /**
+   * Check if bit at rowIndex is set, reading the bitmap directly from a buffer at an absolute byte
+   * offset (MSB-first). Uses an absolute {@link ByteBuffer#get(int)} so it is safe for concurrent
+   * readers of a shared buffer.
+   *
+   * @param buffer the artifact buffer
+   * @param bitmapBase absolute byte offset of the presence bitmap
+   * @param rowIndex the row index to check
+   * @return true if the bit is set
+   */
+  static boolean isPresent(ByteBuffer buffer, int bitmapBase, int rowIndex) {
+    int byteIndex = bitmapBase + rowIndex / 8;
+    int bitIndex = 7 - (rowIndex % 8); // MSB-first
+    return (buffer.get(byteIndex) & (1 << bitIndex)) != 0;
   }
 
   /**
