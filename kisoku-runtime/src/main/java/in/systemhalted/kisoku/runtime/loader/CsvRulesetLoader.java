@@ -69,11 +69,10 @@ public final class CsvRulesetLoader implements RulesetLoader {
       ByteBuffer buffer, AutoCloseable resource, LoadOptions options) {
     BinaryArtifactReader reader = BinaryArtifactReader.read(buffer);
 
+    StringDictionaryReader dictionary = reader.dictionary();
     List<ColumnIndex> indexes = null;
-    StringDictionaryReader dictionary = null;
     if (options.isPrewarmIndexes()) {
       indexes = buildIndexes(reader.columns(), reader.decoders(), reader.rowCount());
-      dictionary = reader.dictionary();
     }
 
     return new LoadedRulesetImpl(
@@ -111,12 +110,12 @@ public final class CsvRulesetLoader implements RulesetLoader {
     ByteBuffer buffer = ByteBuffer.wrap(bytes).order(ByteOrder.BIG_ENDIAN);
     BinaryArtifactReader reader = BinaryArtifactReader.read(buffer);
 
-    // Build indexes if prewarming is enabled
+    // The dictionary is always needed (e.g. to coerce string inputs in the bulk kernel),
+    // independent of index prewarming.
+    StringDictionaryReader dictionary = reader.dictionary();
     List<ColumnIndex> indexes = null;
-    StringDictionaryReader dictionary = null;
     if (options.isPrewarmIndexes()) {
       indexes = buildIndexes(reader.columns(), reader.decoders(), reader.rowCount());
-      dictionary = reader.dictionary();
     }
 
     return new LoadedRulesetImpl(
@@ -140,12 +139,12 @@ public final class CsvRulesetLoader implements RulesetLoader {
 
     BinaryArtifactReader reader = BinaryArtifactReader.read(direct);
 
-    // Build indexes if prewarming is enabled
+    // The dictionary is always needed (e.g. to coerce string inputs in the bulk kernel),
+    // independent of index prewarming.
+    StringDictionaryReader dictionary = reader.dictionary();
     List<ColumnIndex> indexes = null;
-    StringDictionaryReader dictionary = null;
     if (options.isPrewarmIndexes()) {
       indexes = buildIndexes(reader.columns(), reader.decoders(), reader.rowCount());
-      dictionary = reader.dictionary();
     }
 
     return new LoadedRulesetImpl(

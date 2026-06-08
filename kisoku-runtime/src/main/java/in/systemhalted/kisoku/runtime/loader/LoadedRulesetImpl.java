@@ -207,6 +207,22 @@ final class LoadedRulesetImpl implements LoadedRuleset {
     return true;
   }
 
+  /**
+   * Creates a columnar bulk evaluation kernel sharing this ruleset's immutable state. Package
+   * private; the public bulk API is layered on top in a later slice.
+   */
+  ColumnarBulkKernel bulkKernel() {
+    return new ColumnarBulkKernel(
+        columns,
+        decoders,
+        ruleOrder,
+        inputColumnIndices,
+        columnIndexes,
+        allRowsBitmap,
+        dictionary,
+        this::buildOutput);
+  }
+
   private DecisionOutput buildOutput(int rowIndex) {
     Map<String, Object> outputs = new LinkedHashMap<>();
 
