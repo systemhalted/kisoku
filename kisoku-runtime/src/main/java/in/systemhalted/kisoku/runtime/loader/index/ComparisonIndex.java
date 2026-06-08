@@ -88,9 +88,7 @@ public final class ComparisonIndex implements ColumnIndex {
       i++;
     }
 
-    // 6. Return new ComparisonIndex(sortedValues, rowBitmaps, operator, blankRowBitmap)
     return new ComparisonIndex(sortedValues, rowBitmaps, operator, noConditionRows);
-    // throw new UnsupportedOperationException("Not yet implemented");
   }
 
   /**

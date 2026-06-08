@@ -74,12 +74,14 @@ Implement a Java library for the decision-table rule engine described in `docs/P
   - [x] Loader implemented (`CsvRulesetLoader`, `BinaryArtifactReader`)
   - [x] Single and bulk evaluation implemented (`LoadedRulesetImpl`)
   - [x] Type coercion and operator matching implemented
-- [ ] M4: Indexed evaluation + true memory-mapping.
-  - [ ] Build equality indexes for EQ/IN/NE/NOT_IN columns
-  - [ ] Build range indexes for GT/GTE/LT/LTE/BETWEEN columns
-  - [ ] Implement `FileChannel.map()` for file-backed artifacts
-  - [ ] Lazy-load column sections on demand
-  - **Status**: Current evaluation uses O(n) linear scan; must index for PRD targets
+- [x] M4: Indexed evaluation + true memory-mapping.
+  - [x] Build equality indexes for EQ/IN/NOT_IN columns (`EqualityIndex`, `SetMembershipIndex`)
+  - [x] Build range indexes for GT/GTE/LT/LTE columns (`ComparisonIndex`)
+  - [ ] `NE` and `BETWEEN_*`/`NOT_BETWEEN_*` indexes (verify-only today; roadmap Phase 3)
+  - [x] Implement `FileChannel.map()` for file-backed artifacts (`load(Path)`)
+  - [x] Lazy-load column sections on demand (decoders read through the mapped buffer)
+  - **Status**: Indexed candidate filtering shipped with file-backed mmap; the remaining
+    `NE`/`BETWEEN_*` operators fall back to linear verification.
 - [ ] M5: Memory test suite + heap budget verification.
   - [x] `MemoryTestUtils` and `MemorySnapshot` utilities
   - [x] Heap budget tests (`HeapBudgetMemoryTest`)
