@@ -2,7 +2,7 @@
 
 ## Status
 
-Deaft
+Draft
 
 ## Context
 
