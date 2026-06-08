@@ -53,15 +53,42 @@ class DecisionTableBulkEvaluationTest {
               DecisionInput.of(Map.of("AGE", 40)));
 
       BulkResult result = ruleset.evaluateBulk(base, variants);
-      assertEquals(3, result.results().size());
+      assertEquals(3, result.size());
 
-      DecisionOutput first = result.results().get(0);
-      DecisionOutput second = result.results().get(1);
-      DecisionOutput third = result.results().get(2);
+      DecisionOutput first = result.get(0).orElseThrow();
+      DecisionOutput second = result.get(1).orElseThrow();
+      DecisionOutput third = result.get(2).orElseThrow();
 
       assertEquals("R1", first.ruleId());
       assertEquals("R2", second.ruleId());
       assertEquals("R3", third.ruleId());
+    }
+  }
+
+  @Test
+  void nonMatchingVariantYieldsEmptyWithoutAbortingBatch(@TempDir Path tempDir) throws IOException {
+    Path csv = DecisionTableFixtures.writePriorityTable(tempDir);
+    Schema schema = DecisionTableFixtures.priorityTableSchema();
+
+    CompiledRuleset compiled =
+        compiler.compile(
+            DecisionTableSources.csv(csv),
+            CompileOptions.production(schema).withRuleSelection(RuleSelectionPolicy.AUTO));
+
+    try (LoadedRuleset ruleset = loader.load(compiled, LoadOptions.memoryMap())) {
+      DecisionInput base = DecisionInput.of(Map.of("REGION", "APAC"));
+      List<DecisionInput> variants =
+          List.of(
+              DecisionInput.of(Map.of("AGE", 25)), // matches R1
+              DecisionInput.of(Map.of("AGE", -999, "REGION", "NOWHERE")), // matches nothing
+              DecisionInput.of(Map.of("AGE", 40))); // matches R3
+
+      BulkResult result = ruleset.evaluateBulk(base, variants);
+
+      assertEquals(3, result.size());
+      assertEquals("R1", result.get(0).orElseThrow().ruleId());
+      assertTrue(result.get(1).isEmpty(), "middle variant should match no rule");
+      assertEquals("R3", result.get(2).orElseThrow().ruleId());
     }
   }
 }

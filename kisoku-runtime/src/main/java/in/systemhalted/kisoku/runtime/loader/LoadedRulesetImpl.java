@@ -15,6 +15,8 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.concurrent.Executor;
 
 /**
  * Immutable, thread-safe implementation of LoadedRuleset for evaluation.
@@ -175,16 +177,36 @@ final class LoadedRulesetImpl implements LoadedRuleset {
 
   @Override
   public BulkResult evaluateBulk(DecisionInput base, List<DecisionInput> variants) {
-    List<DecisionOutput> results = new ArrayList<>(variants.size());
+    return runBulk(base, variants, null, 1);
+  }
 
+  @Override
+  public BulkResult evaluateBulk(
+      DecisionInput base, List<DecisionInput> variants, Executor executor, int parallelism) {
+    return runBulk(base, variants, executor, parallelism);
+  }
+
+  /**
+   * Scores all variants through the columnar bulk kernel. The kernel returns a {@link
+   * DecisionOutput}[] with a {@code null} entry for any variant that matched no rule; bulk does not
+   * abort, so those become empty results.
+   */
+  private BulkResult runBulk(
+      DecisionInput base, List<DecisionInput> variants, Executor executor, int parallelism) {
+    // Merge base + each variant (variant overrides base), then encode the whole batch once.
+    List<DecisionInput> merged = new ArrayList<>(variants.size());
     for (DecisionInput variant : variants) {
-      // Merge base and variant (variant overrides base)
-      DecisionInput merged = merge(base, variant);
-      DecisionOutput output = evaluate(merged);
-      results.add(output);
+      merged.add(merge(base, variant));
     }
+    ColumnarBulkKernel kernel = bulkKernel();
+    InputBatch batch = kernel.encode(merged);
 
-    return new BulkResult(results);
+    // TODO(human): score the batch and assemble the BulkResult.
+    // 1. Score: when executor != null and parallelism > 1, use
+    //    kernel.evaluate(batch, executor, parallelism); otherwise kernel.evaluate(batch).
+    // 2. The returned DecisionOutput[] has one entry per variant, in order, with null for
+    //    "no rule matched". Map each to Optional.ofNullable(...) and return new BulkResult(list).
+    throw new UnsupportedOperationException("TODO(human): assemble BulkResult from kernel output");
   }
 
   private boolean matchesAllInputs(int rowIndex, DecisionInput input) {
