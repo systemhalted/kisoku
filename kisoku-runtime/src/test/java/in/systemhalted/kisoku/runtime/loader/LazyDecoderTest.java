@@ -129,4 +129,28 @@ class LazyDecoderTest {
     assertFalse(decoder.matches(1, 10));
     assertTrue(decoder.matches(7, 12345)); // blank row matches
   }
+
+  @Test
+  void matchesCoercedAgreesWithMatchesForIntegerColumns() {
+    int bitmapSize = BitMapUtils.bitmapSize(ROW_COUNT);
+    ByteBuffer buf =
+        ByteBuffer.allocate(BASE + bitmapSize + ROW_COUNT * 4).order(ByteOrder.BIG_ENDIAN);
+    writeBitmap(buf, BASE, 0, 1, 3, 9);
+    int[] values = {30, 40, 0, 65, 0, 0, 0, 0, 0, 18};
+    for (int i = 0; i < ROW_COUNT; i++) {
+      buf.putInt(BASE + bitmapSize + i * 4, values[i]);
+    }
+
+    ScalarColumnDecoder decoder =
+        ScalarColumnDecoder.create(
+            intColumn(Operator.GTE), buf, BASE, ROW_COUNT, emptyDictionary());
+
+    // For INTEGER columns the coerced int is the raw value, so matchesCoerced must mirror matches.
+    for (int row = 0; row < ROW_COUNT; row++) {
+      for (int v : new int[] {17, 18, 30, 65, 100}) {
+        assertEquals(
+            decoder.matches(row, v), decoder.matchesCoerced(row, v), "row " + row + " value " + v);
+      }
+    }
+  }
 }

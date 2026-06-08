@@ -68,10 +68,18 @@ final class RangeColumnDecoder implements ColumnDecoder {
     if (!hasCondition(rowIndex)) {
       return true; // Blank = no condition, always matches
     }
+    return matchesCoerced(
+        rowIndex, TypeCoercion.toComparableInt(inputValue, column.type(), dictionary));
+  }
+
+  @Override
+  public boolean matchesCoerced(int rowIndex, int inputInt) {
+    if (!hasCondition(rowIndex)) {
+      return true; // Blank = no condition, always matches
+    }
 
     int min = buffer.getInt(minBase + rowIndex * 4);
     int max = buffer.getInt(maxBase + rowIndex * 4);
-    int inputInt = TypeCoercion.toComparableInt(inputValue, column.type(), dictionary);
 
     Operator op = column.operator();
     return switch (op) {

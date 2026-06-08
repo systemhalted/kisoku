@@ -21,6 +21,19 @@ sealed interface ColumnDecoder
   boolean matches(int rowIndex, Object inputValue);
 
   /**
+   * Check if an already-coerced input value matches the condition at the given row.
+   *
+   * <p>Equivalent to {@link #matches(int, Object)} but takes the comparable int produced by {@link
+   * TypeCoercion#toComparableInt} directly, skipping per-call coercion. The columnar bulk kernel
+   * uses this to verify survivors from a batch of pre-coerced codes without re-coercing.
+   *
+   * @param rowIndex the row to check
+   * @param coercedValue the input value already coerced to its comparable int (0 = null/missing)
+   * @return true if matches, false otherwise
+   */
+  boolean matchesCoerced(int rowIndex, int coercedValue);
+
+  /**
    * Check if this row has a condition (not blank).
    *
    * @param rowIndex the row to check

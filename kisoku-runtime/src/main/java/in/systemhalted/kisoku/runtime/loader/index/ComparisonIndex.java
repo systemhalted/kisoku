@@ -203,6 +203,16 @@ public final class ComparisonIndex implements ColumnIndex {
   }
 
   /**
+   * Number of distinct threshold values indexed for this column. Used as a selectivity estimate
+   * (more distinct values generally means each input narrows the candidate set further).
+   *
+   * @return count of distinct values
+   */
+  public int uniqueValueCount() {
+    return sortedValues.length;
+  }
+
+  /**
    * Finds the lower bound index for a key in a sorted array.
    *
    * <p>Returns the index of the first element >= key, or values.length if all elements are less

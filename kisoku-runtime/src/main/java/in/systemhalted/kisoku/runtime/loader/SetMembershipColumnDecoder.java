@@ -86,10 +86,18 @@ final class SetMembershipColumnDecoder implements ColumnDecoder {
     if (!hasCondition(rowIndex)) {
       return true; // Blank = no condition, always matches
     }
+    return matchesCoerced(
+        rowIndex, TypeCoercion.toComparableInt(inputValue, column.type(), dictionary));
+  }
+
+  @Override
+  public boolean matchesCoerced(int rowIndex, int inputInt) {
+    if (!hasCondition(rowIndex)) {
+      return true; // Blank = no condition, always matches
+    }
 
     int offset = listOffset(rowIndex);
     int length = listLength(rowIndex);
-    int inputInt = TypeCoercion.toComparableInt(inputValue, column.type(), dictionary);
 
     boolean found = false;
     for (int i = 0; i < length; i++) {
