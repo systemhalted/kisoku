@@ -33,7 +33,7 @@ Both `scale` and `memory` tags are excluded by default for fast feedback.
 
 Kisoku is a Java decision-table rule engine that compiles large decision tables into an execution-optimized form, supports indexed evaluation, and provides deterministic results for single and bulk inputs.
 
-**Current status**: Under development. CSV parsing, operator handling, and validation are complete. Compiler and loader are stubs. See `docs/artifact-format.md` for the binary format specification.
+**Current status**: Under development, but the core lifecycle is implemented end to end: CSV parsing/validation, compilation to the binary artifact, file persistence (`writeTo(Path)`) and memory-mapped reload (`load(Path)`), and indexed evaluation (EQ, GT, GTE, LT, LTE, IN, NOT_IN). An internal scalar columnar bulk kernel exists (package-private, not yet public API). See `docs/getting-started.md` for usage and `docs/artifact-format.md` for the binary format.
 
 ## Architecture
 
@@ -46,6 +46,7 @@ validate → compile → load → evaluate
 1. **Validate**: `Kisoku.validator().validate(source, schema)` → `ValidationResult`
 2. **Compile**: `Kisoku.compiler().compile(source, CompileOptions.production(schema))` → `CompiledRuleset`
 3. **Load**: `Kisoku.loader().load(compiled, LoadOptions.memoryMap())` → `LoadedRuleset`
+   - Persist/reload: `compiled.writeTo(path)` then `Kisoku.loader().load(path, LoadOptions.memoryMap())` (file-backed mmap)
 4. **Evaluate**: `ruleset.evaluate(input)` or `ruleset.evaluateBulk(base, variants)`
 
 ### Schema API
@@ -81,8 +82,8 @@ Two Java modules with JPMS for proper encapsulation:
 
 **kisoku-runtime** (closed module - no exports):
 - `in.systemhalted.kisoku.runtime.csv` - CSV parsing and validation
-- `in.systemhalted.kisoku.runtime.compiler` - Compilation (stub)
-- `in.systemhalted.kisoku.runtime.loader` - Loading (stub)
+- `in.systemhalted.kisoku.runtime.compiler` - Compilation to binary artifact
+- `in.systemhalted.kisoku.runtime.loader` - Loading, indexing, and evaluation (incl. internal bulk kernel)
 - Implementations discovered via ServiceLoader
 
 ### Key Interfaces
@@ -111,7 +112,7 @@ R1,10,(18,29),(APAC,EMEA),0.05
 - Test-only: `TEST_*` prefix (included in all artifacts with flag `0x02`, excluded at evaluation time)
 - Reserved: `RULE_ID`, `PRIORITY`
 
-**Operators**: `EQ` (=), `NE` (!=), `GT` (>), `GTE` (>=), `LT` (<), `LTE` (<=), `BETWEEN_INCLUSIVE`, `BETWEEN_EXCLUSIVE`, `NOT_BETWEEN_INCLUSIVE`, `NOT_BETWEEN_EXCLUSIVE`, `IN`, `NOT IN`, `SET`
+**Operators**: `EQ` (=), `NE` (!=), `GT` (>), `GTE` (>=), `LT` (<), `LTE` (<=), `BETWEEN_INCLUSIVE`, `BETWEEN_EXCLUSIVE`, `NOT_BETWEEN_INCLUSIVE`, `NOT_BETWEEN_EXCLUSIVE`, `IN`, `NOT_IN` (alias `NOT IN`), `SET`
 
 **Cell encoding**:
 - Range operators: `(min,max)`

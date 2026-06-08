@@ -11,7 +11,7 @@ evaluation, and provides deterministic results for single and bulk inputs.
 - **Validator**: Implemented - validates CSV structure, operators, and schema.
 - **Compiler**: Implemented - compiles CSV to binary artifact format.
 - **Loader**: Implemented - loads compiled artifacts for evaluation.
-- **Indexed Evaluation**: Implemented for EQ, GT, GTE, LT, LTE operators.
+- **Indexed Evaluation**: Implemented for EQ, GT, GTE, LT, LTE, IN, NOT_IN operators.
 - See `docs/PRD.md` for requirements and constraints.
 - Not ready for prime time yet.
 
@@ -33,7 +33,7 @@ Column conventions:
 
 Cell encoding:
 - `BETWEEN_*` / `NOT_BETWEEN_*`: `(min,max)`
-- `IN` / `NOT IN`: `(A,B,C)`
+- `IN` / `NOT_IN`: `(A,B,C)` (`NOT IN` with a space is also accepted)
 - Blank cell means "no condition"
 
 Example:
@@ -77,13 +77,12 @@ mvn -Dkisoku.runMaxScaleTests=true -Dkisoku.scaleRows=20000000 verify
 - TODO: Tune memory settings for larger scale tests.
 
 ## Library Usage (Sketch)
-```java
-import in.systemhalted.kisoku.api.*;
-import in.systemhalted.kisoku.api.validation.*;
-import in.systemhalted.kisoku.api.compilation.*;
-import in.systemhalted.kisoku.api.loading.*;
-import in.systemhalted.kisoku.api.evaluation.*;
 
+> Full walkthrough — install, author a table, persist/reload the artifact, bulk
+> evaluation, options — in **[docs/getting-started.md](docs/getting-started.md)**.
+> Type/signature reference in [docs/api.md](docs/api.md).
+
+```java
 // Define schema for non-reserved columns
 Schema schema = Schema.builder()
     .column("AGE", ColumnType.INTEGER)
@@ -97,6 +96,16 @@ CompiledRuleset compiled = Kisoku.compiler()
     .compile(source, CompileOptions.production(schema).withRuleSelection(RuleSelectionPolicy.AUTO));
 try (LoadedRuleset ruleset = Kisoku.loader().load(compiled, LoadOptions.memoryMap())) {
   DecisionOutput output = ruleset.evaluate(DecisionInput.of(Map.of("AGE", 25)));
+}
+```
+
+Compile once, then persist the artifact and reload it later (true file-backed
+memory mapping, off-heap, sharable across processes):
+
+```java
+compiled.writeTo(Path.of("pricing.kss"));
+try (LoadedRuleset ruleset = Kisoku.loader().load(Path.of("pricing.kss"), LoadOptions.memoryMap())) {
+  DecisionOutput output = ruleset.evaluate(DecisionInput.of(Map.of("AGE", 25, "REGION", "APAC")));
 }
 ```
 

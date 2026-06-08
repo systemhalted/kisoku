@@ -1,5 +1,9 @@
 # API Sketch
 
+> New here? Start with the task-oriented walkthrough in
+> [getting-started.md](getting-started.md). This document is the type/contract
+> reference.
+
 ## Goals
 - Provide a small, stable Java library API with explicit lifecycle stages.
 - Keep loaded rulesets immutable and safe for concurrent evaluation.
@@ -21,6 +25,7 @@
 1) `validate(source, schema)` -> `ValidationResult`
 2) `compile(source, CompileOptions.production(schema))` -> `CompiledRuleset`
 3) `load(compiled, LoadOptions)` -> `LoadedRuleset`
+   - or persist with `compiled.writeTo(path)` and later `load(path, LoadOptions)`
 4) `evaluate(input)` or `evaluateBulk(base, variants)`
 
 ## Public Interfaces (Sketch)
@@ -46,9 +51,17 @@ public interface RulesetCompiler {
   CompiledRuleset compile(DecisionTableSource source, CompileOptions options);
 }
 
+public interface CompiledRuleset {
+  ArtifactKind kind();
+  RulesetMetadata metadata();
+  byte[] bytes();
+  void writeTo(Path target) throws IOException; // persist the self-describing .kss artifact
+}
+
 // in.systemhalted.kisoku.api.loading
 public interface RulesetLoader {
   LoadedRuleset load(CompiledRuleset compiled, LoadOptions options);
+  LoadedRuleset load(Path artifact, LoadOptions options) throws IOException; // reload a written artifact
 }
 
 public interface LoadedRuleset extends AutoCloseable {
@@ -128,7 +141,7 @@ Operator row tokens (ALL CAPS):
 - `EQ`, `NE`, `GT`, `GTE`, `LT`, `LTE`
 - `BETWEEN_INCLUSIVE`, `BETWEEN_EXCLUSIVE`
 - `NOT_BETWEEN_INCLUSIVE`, `NOT_BETWEEN_EXCLUSIVE`
-- `IN`, `NOT IN`
+- `IN`, `NOT_IN` (`NOT IN` with a space is also accepted)
 
 Accepted operator aliases in the operator row:
 - `=` → `EQ`
@@ -142,43 +155,45 @@ Accepted operator aliases in the operator row:
 
 ## Cell Value Encoding
 - `BETWEEN_*` and `NOT_BETWEEN_*` values use `(min,max)`.
-- `IN` and `NOT IN` values use `(A,B,C)` (comma-separated).
+- `IN` and `NOT_IN` values use `(A,B,C)` (comma-separated).
 - Empty cells mean no condition.
 - Values are trimmed (whitespace is ignored around tokens).
 - Operands may contain commas and are not quoted; parsing splits on commas only
   when not inside parentheses.
 
 ## Type Map
-- Clients must supply a type map for all input and output columns (including `TEST_` columns).
-- Type map is required at compile time and may be validated at load time.
-- `RULE_ID` and `PRIORITY` have fixed types (string and int).
-- String comparisons are case-sensitive by default; override via `CompileOptions`.
+- Clients must supply a `Schema` (type map) for all input and output columns (including `TEST_` columns).
+- The schema is required at compile time and may be validated at load time.
+- `RULE_ID` and `PRIORITY` have fixed types (string and int) and are not declared.
+- String comparisons are case-sensitive.
 
-Supported types:
-- `STRING`, `BOOLEAN`, `CHARACTER`
-- `INT`, `LONG`, `DOUBLE`, `DECIMAL`
+Supported `ColumnType`s (see [Schema API](#schema-api)):
+- `STRING`
+- `INTEGER`
+- `DECIMAL`
+- `BOOLEAN`
 - `DATE` (ISO-8601 date)
 - `TIMESTAMP` (ISO-8601 local date-time)
-- `TIMESTAMP_TZ` (ISO-8601 with timezone offset or `Z`)
-- `CHARACTER` values must be length 1.
 
 ## Operator Storage (Conceptual)
 - `RULE_ID`: stored per row, typically dictionary-encoded.
 - `PRIORITY`: required per row when the column exists. Can be overridden by CompileOptions.
 - `BETWEEN_*`/`NOT_BETWEEN_*`: store `min` and `max` values plus a presence flag.
-- `IN`/`NOT IN`: store a value list and a presence flag.
+- `IN`/`NOT_IN`: store a value list and a presence flag.
 - `SET`: outputs may be blank, but each row must have at least one output value.
 
 ## Options and Configuration
-- `CompileOptions` includes `artifactKind` (TEST_INCLUSIVE, PRODUCTION), rule selection,
-  and indexing profile hints.
+- `CompileOptions`: `production(schema)` / `testInclusive(schema)` factories, plus
+  `withArtifactKind`, `withRuleSelection`, `withPriorityColumn`, `withSchema`.
+  `artifactKind` is `TEST_INCLUSIVE` or `PRODUCTION`.
 - `RuleSelectionPolicy` supports `AUTO`, `PRIORITY`, and `FIRST_MATCH`.
   - `AUTO` uses priority when a priority column is present; otherwise it uses
     deterministic row order (first-match).
 - Reserved column names and keywords defined by the library are ALL CAPS.
   Avoid collisions with user-defined column names.
-- `LoadOptions` includes memory mapping, index prewarm, and index load mode.
-- `EvaluationOptions` (optional) can control diagnostics and strictness.
+- `LoadOptions`: `memoryMap()` (off-heap; true file-backed mmap when used with
+  `load(Path)`) or `onHeap()`, plus `withPrewarmIndexes(boolean)`. Indexes cover
+  `EQ`, `GT`, `GTE`, `LT`, `LTE`, `IN`, and `NOT_IN` columns.
 
 ## Errors
 - `ValidationException` for schema/test-cell errors.
@@ -188,8 +203,8 @@ Supported types:
 
 ## Extensibility
 - Provide custom sources by implementing `DecisionTableSource`.
-- Provide IO helpers in `in.systemhalted.kisoku.io` such as
-  `DecisionTableSources.csv(Path)` and `DecisionTableSources.json(Path)`.
+- Construct CSV sources via `DecisionTableSources.csv(Path)` (the only built-in
+  factory today; JSON/database sources are not implemented yet).
 - Keep public API minimal; implementation details live in `compiler` and `runtime`.
 
 ## Example Usage (Sketch)
@@ -208,7 +223,7 @@ RulesetLoader loader = Kisoku.loader();
 
 ValidationResult validation = validator.validate(source, schema);
 if (!validation.isOk()) {
-  throw new ValidationException(validation.issues());
+  throw new ValidationException("Invalid decision table: " + validation.issues());
 }
 
 CompiledRuleset compiled = compiler.compile(
@@ -300,4 +315,4 @@ The `TEST_EXPECTED_SEGMENT` value can be compared against actual results in test
 - Keep `LoadedRuleset` instances long-lived and share across threads.
 - Use production artifacts for runtime; keep test-inclusive artifacts for validation only.
 - Bulk evaluation applies base inputs first, then overlays variant inputs.
-- Keywords in expressions are ALL CAPS (e.g., `BETWEEN_INCLUSIVE`, `IN`, `NOT IN`).
+- Keywords in expressions are ALL CAPS (e.g., `BETWEEN_INCLUSIVE`, `IN`, `NOT_IN`).

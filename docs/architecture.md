@@ -45,18 +45,19 @@ under 1 GB with bounded per-evaluation working set.
   The loader/evaluator can optionally exclude them at evaluation time.
 - Persist a stable, versioned binary layout with checksums.
 - Parse operator values in cells: `BETWEEN_*`/`NOT_BETWEEN_*` use `(min,max)`,
-  `IN`/`NOT IN` use `(A,B,C)`, and blank cells mean no condition.
+  `IN`/`NOT_IN` use `(A,B,C)`, and blank cells mean no condition.
 - Normalize operator aliases (e.g., `>=` -> `GTE`, `BETWEEN` -> `BETWEEN_INCLUSIVE`) during compilation.
 - `PRIORITY` values are required when the column exists.
 - Output (`SET`) cells may be blank, but at least one output must be non-blank per row.
-- Compile against the client-provided type map (inputs and outputs).
-- Enforce type-specific constraints (e.g., `CHARACTER` length = 1).
+- Compile against the client-provided schema (inputs and outputs).
+- Enforce type-specific constraints per `ColumnType` (STRING, INTEGER, DECIMAL,
+  BOOLEAN, DATE, TIMESTAMP).
 
 ## Operator Storage (Conceptual)
 - `RULE_ID`: dictionary id or string offsets per row.
 - `PRIORITY`: `int[]` per row.
 - `BETWEEN_*`/`NOT_BETWEEN_*`: `minId[]`, `maxId[]`, `hasCondition` bitset.
-- `IN`/`NOT IN`: `listOffsets[]`, `listLengths[]`, `listValueIds[]`,
+- `IN`/`NOT_IN`: `listOffsets[]`, `listLengths[]`, `listValueIds[]`,
   `hasCondition` bitset.
 - `SET` outputs: `valueId[]`, `hasValue` bitset.
 
@@ -79,59 +80,50 @@ under 1 GB with bounded per-evaluation working set.
 
 ## Loading Strategy
 
-### Current Behavior (M3)
-- Artifacts loaded via `BinaryArtifactReader` into `ByteBuffer.allocateDirect()`.
-- Column data decoded into heap arrays (`int[]`, `short[]`, etc.).
-- `LoadedRuleset` is immutable and thread-safe for concurrent evaluation.
-- `close()` releases direct buffer references.
-
-### Planned Enhancement (M4)
-- Use `FileChannel.map()` for true file-backed memory mapping.
-- Lazy-load column sections on demand (only decode accessed columns).
-- Keep column data off-heap for large tables to meet <1GB heap budget.
-- Build or hydrate indexes at load time if not fully persisted.
+- `load(compiled, ...)` and `load(Path, ...)` are both supported via
+  `BinaryArtifactReader`.
+- `LoadOptions.memoryMap()` with `load(Path)` maps the artifact file directly
+  (`FileChannel.map()`); `onHeap()` uses a heap buffer. In both cases column data
+  is read **lazily through the buffer** by the decoders rather than copied into
+  per-column heap arrays, keeping large tables off-heap to meet the <1GB budget.
+- Indexes are built at load time (eagerly with `withPrewarmIndexes(true)`, the
+  default, or lazily otherwise).
+- `LoadedRuleset` is immutable and thread-safe for concurrent evaluation;
+  `close()` releases the buffer/mapping.
 
 ## Indexing Strategy
 
-> **Status: NOT IMPLEMENTED (Target: M4)**
->
-> Current evaluation uses O(n) linear scan over all rows. This section describes
-> the planned indexing approach required to meet PRD performance targets.
+Indexed candidate filtering is implemented (not a linear scan). Coverage:
 
-### Planned Design (M4)
-- **Equality index**: value → bitset or row list for EQ/IN/NE/NOT_IN columns.
-- **Range index**: sorted arrays + binary search for GT/GTE/LT/LTE/BETWEEN columns.
-- **Candidate selection**: intersect indexed candidates via bitset operations;
-  fallback to scan only when index coverage is insufficient.
-- **Deterministic rule selection**: using fixed row order or explicit PRIORITY.
+- **Equality index**: value → bitmap for `EQ` columns.
+- **Comparison index**: sorted-threshold bitmaps for `GT`, `GTE`, `LT`, `LTE`.
+- **Set-membership index**: inverted value → rows bitmap for `IN`, `NOT_IN`
+  (`NOT_IN` served by bitmap complement). See ADR-0009.
+- **Candidate selection**: start from "all rows," fetch each indexed input
+  column's candidate bitmap, intersect (`AND`) into the running set, then verify
+  survivors in deterministic rule order.
+- **Deterministic rule selection**: fixed row order or explicit `PRIORITY`.
 
-### Current Behavior (M3)
-```java
-// LoadedRulesetImpl.evaluate() - O(n) scan
-for (int rowIndex : ruleOrder) {
-  if (matchesAllInputs(rowIndex, input)) {
-    return buildOutput(rowIndex);
-  }
-}
-```
+Range operators (`BETWEEN_*`) are not yet indexed and fall back to verification.
 
 ### Performance Impact
-- At 5M rows, linear scan cannot meet PRD p95 < 250ms target.
-- Indexing should reduce candidate set to O(1) or O(log n) for indexed columns.
+- Bitmap intersection reduces the candidate set before per-row verification,
+  meeting the PRD p95 target where linear scan could not at 5M rows.
 
 ## Evaluation Path
 
-### Current Behavior (M3 - Implemented)
 - Normalize inputs once and reuse in both single and bulk modes.
 - Apply base input, then overlay variant inputs per evaluation.
-- **Linear scan** over all rows in deterministic order (priority or first-match).
-- Type coercion via `TypeCoercion` class handles input value conversions.
-- Return `DecisionOutput` with `ruleId()` and `outputs()` map.
+- Narrow candidates via index bitmap intersection, then verify candidate rows in
+  deterministic order (priority or first-match).
+- Type coercion via `TypeCoercion` handles input value conversions; decoders also
+  support a coerced-int match path read directly from the buffer.
+- Return `DecisionOutput` with `ruleId()` and `outputs()` (plus optional
+  diagnostics).
 
-### Planned Enhancement (M4)
-- Use indexes to narrow candidate set before evaluation.
-- Evaluate only candidate rows via bitset intersection.
-- Return outputs plus optional diagnostics (matched conditions, index stats).
+A separate internal scalar **columnar bulk kernel** (ADR-0010, package-private)
+scores pre-coerced columnar batches for high-volume throughput; it is not yet
+public API. The public bulk entry point remains `LoadedRuleset.evaluateBulk`.
 
 ## Concurrency and Isolation
 - Loaded rulesets are immutable; no shared mutable state during evaluation.
