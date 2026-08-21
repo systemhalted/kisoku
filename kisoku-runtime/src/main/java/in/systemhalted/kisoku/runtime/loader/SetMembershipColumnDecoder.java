@@ -12,7 +12,7 @@ import java.nio.ByteBuffer;
  * presence_bitmap (ceil(row_count/8) bytes)
  * list_offsets[row_count] (4 bytes each)
  * list_lengths[row_count] (2 bytes each)
- * all_values[] (4 bytes each)
+ * all_values[] (8 bytes each)
  * </pre>
  *
  * <p>Values are read lazily through the buffer using absolute offsets (no on-heap copy, position
@@ -77,8 +77,8 @@ final class SetMembershipColumnDecoder implements ColumnDecoder {
     return buffer.getShort(lengthsBase + rowIndex * 2) & 0xFFFF;
   }
 
-  private int setValue(int index) {
-    return buffer.getInt(valuesBase + index * 4);
+  private long setValue(int index) {
+    return buffer.getLong(valuesBase + index * 8);
   }
 
   @Override
@@ -90,11 +90,13 @@ final class SetMembershipColumnDecoder implements ColumnDecoder {
       return false; // Absent input cannot satisfy a condition, including NOT_IN
     }
     return matchesCoerced(
-        rowIndex, TypeCoercion.toComparableInt(inputValue, column.type(), dictionary), true);
+        rowIndex,
+        TypeCoercion.toComparableCode(inputValue, column.type(), column.scale(), dictionary),
+        true);
   }
 
   @Override
-  public boolean matchesCoerced(int rowIndex, int inputInt, boolean present) {
+  public boolean matchesCoerced(int rowIndex, long inputCode, boolean present) {
     if (!hasCondition(rowIndex)) {
       return true; // Blank = no condition, always matches
     }
@@ -107,7 +109,7 @@ final class SetMembershipColumnDecoder implements ColumnDecoder {
 
     boolean found = false;
     for (int i = 0; i < length; i++) {
-      if (setValue(offset + i) == inputInt) {
+      if (setValue(offset + i) == inputCode) {
         found = true;
         break;
       }
@@ -155,9 +157,9 @@ final class SetMembershipColumnDecoder implements ColumnDecoder {
     return out;
   }
 
-  int[] allValues() {
+  long[] allValues() {
     int total = totalValues();
-    int[] out = new int[total];
+    long[] out = new long[total];
     for (int i = 0; i < total; i++) {
       out[i] = setValue(i);
     }

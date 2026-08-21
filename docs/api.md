@@ -241,31 +241,51 @@ The engine coerces input values to match stored column types at evaluation time:
 
 | Column Type | Input Type | Coercion Behavior |
 |-------------|------------|-------------------|
-| `STRING` | Any | `toString()` → dictionary lookup |
-| `INTEGER` | `Number` | `intValue()` extraction |
-| `DECIMAL` | `BigDecimal` | `toPlainString()` → dictionary lookup |
-| `DECIMAL` | Other | `toString()` → dictionary lookup |
+| `STRING` | Any | `toString()` → rank in the sorted dictionary |
+| `INTEGER` | `Number` | `longValue()`, full 64-bit range |
+| `DECIMAL` | `BigDecimal` | unscaled value at the column's scale |
+| `DECIMAL` | `Double`/`Float` | via `BigDecimal.valueOf` |
+| `DECIMAL` | Other `Number` | via `BigDecimal.valueOf(longValue())` |
 | `BOOLEAN` | `Boolean` | `true` → 1, `false` → 0 |
-| `DATE` | `LocalDate` | `toEpochDay()` as int |
-| `DATE` | `Integer` | Used directly as epoch day |
-| `TIMESTAMP` | `Instant` | `toString()` → dictionary lookup |
-| `TIMESTAMP` | Other | `toString()` → dictionary lookup |
+| `DATE` | `LocalDate` | `toEpochDay()` |
+| `TIMESTAMP` | `Instant` | epoch microseconds |
+
+All types encode into one order-preserving 64-bit domain, so comparison operators compare
+values rather than storage order. Two consequences worth knowing:
+
+- **Decimal scale does not affect equality.** `new BigDecimal("0.50")`, `new BigDecimal("0.5")`
+  and `0.5d` all match a cell written as `0.5`.
+- **A value the compiler never saw still orders correctly.** A string absent from the
+  dictionary, or a decimal with more precision than the column stores, is ranked between its
+  two neighbours: it satisfies the right ordering comparisons and equals nothing.
 
 **Type mismatch behavior**: Throws `EvaluationException` if the input type cannot be coerced (e.g., passing a `String` where `INTEGER` is expected).
+
+### Output Value Types
+
+`DecisionOutput.outputs()` returns values decoded back to their column type: `String`,
+`Long` (`INTEGER`), `BigDecimal` at the column's scale (`DECIMAL`), `Boolean`, `LocalDate`
+and `Instant`.
 
 ## Null and Blank Value Handling
 
 | Context | Behavior |
 |---------|----------|
-| Input value is `null` | Treated as "no value"; matches blank cells (no condition) |
-| Input key missing | Treated as `null`; matches blank cells |
+| Input key missing, or value is `null` | Matches blank cells only. A non-blank condition is **never** satisfied by an absent input |
 | CSV cell is blank | No condition for that column; row matches any input value |
 | Output cell is blank | Output key omitted from `DecisionOutput.outputs()` |
 
+An absent input is "unknown", not a value. It fails every non-blank condition, negative
+operators included: an input with no `REGION` does not satisfy `REGION NE APAC` or
+`REGION NOT IN (APAC,EMEA)`, because not knowing a value is not evidence that it differs.
+A value that *was* supplied but is unknown to the dictionary is a different case — it does
+satisfy those operators.
+
 **Example**:
 ```java
-// If REGION column has blank cell (no condition), this input matches
-DecisionInput.of(Map.of("AGE", 25))  // No REGION key = matches blank REGION cell
+// If REGION column has a blank cell (no condition), this input matches that row
+DecisionInput.of(Map.of("AGE", 25))  // No REGION key = matches blank REGION cell,
+                                     // but not a row with any REGION condition
 ```
 
 ## Thread-Safety Guarantees

@@ -19,6 +19,7 @@ import in.systemhalted.kisoku.api.validation.RulesetValidator;
 import in.systemhalted.kisoku.api.validation.ValidationResult;
 import in.systemhalted.kisoku.testutil.DecisionTableFixtures;
 import java.io.IOException;
+import java.math.BigDecimal;
 import java.nio.file.Path;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
@@ -46,7 +47,7 @@ class DecisionTableLifecycleTest {
       DecisionInput input = DecisionInput.of(Map.of("AGE", 25, "REGION", "EMEA"));
       DecisionOutput output = ruleset.evaluate(input);
       assertEquals("R2", output.ruleId());
-      assertEquals("0.10", output.outputs().get("DISCOUNT"));
+      assertEquals(new BigDecimal("0.10"), output.outputs().get("DISCOUNT"));
     }
   }
 
@@ -66,7 +67,7 @@ class DecisionTableLifecycleTest {
       DecisionInput input = DecisionInput.of(Map.of("AGE", 25, "REGION", "APAC"));
       DecisionOutput output = ruleset.evaluate(input);
       assertEquals("R1", output.ruleId());
-      assertEquals("0.05", output.outputs().get("DISCOUNT"));
+      assertEquals(new BigDecimal("0.05"), output.outputs().get("DISCOUNT"));
     }
   }
 
@@ -84,7 +85,7 @@ class DecisionTableLifecycleTest {
       DecisionInput input = DecisionInput.of(Map.of("AGE", 25, "REGION", "APAC"));
       DecisionOutput output = ruleset.evaluate(input);
       assertEquals("R1", output.ruleId());
-      assertEquals("0.05", output.outputs().get("DISCOUNT"));
+      assertEquals(new BigDecimal("0.05"), output.outputs().get("DISCOUNT"));
     }
   }
 

@@ -27,18 +27,18 @@ public sealed interface ColumnIndex permits EqualityIndex, ComparisonIndex, SetM
    *   <li>Rows with blank cells (no condition - always match)
    * </ul>
    *
-   * @param inputValue the coerced input value (from TypeCoercion.toComparableInt)
+   * @param inputValue the coerced input code (from TypeCoercion.toComparableCode)
    * @return bitmap of candidate row indices
    */
-  long[] getCandidates(int inputValue);
+  long[] getCandidates(long inputValue);
 
   /**
    * Get the candidate rows for an input that supplied no value for this column.
    *
    * <p>Only rows with blank cells qualify: a non-blank condition cannot be satisfied by an absent
    * input, so it must not survive candidate filtering. This is distinct from {@link
-   * #getCandidates(int)} with a code of {@code NULL_ID}, which represents a value that was supplied
-   * but is unknown to the dictionary.
+   * #getCandidates(long)} with a code of {@code NULL_CODE}, which represents a value that was
+   * supplied but is unknown to the dictionary.
    *
    * @return bitmap of rows whose cell in this column is blank
    */

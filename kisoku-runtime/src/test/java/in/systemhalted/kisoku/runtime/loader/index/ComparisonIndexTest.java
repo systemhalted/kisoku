@@ -23,7 +23,7 @@ class ComparisonIndexTest {
     //   Rule "AGE GT 40" matches when input > 40 → 30 > 40 ✗
     //   Rule "AGE GT 50" matches when input > 50 → 30 > 50 ✗
     // Expected: rows 0 (threshold=10), row 1 (threshold=20), and row 5 (blank)
-    int[] sortedValues = {10, 20, 30, 40, 50};
+    long[] sortedValues = {10, 20, 30, 40, 50};
     long[][] rowBitmaps = createRowBitmaps(5, 1);
     for (int i = 0; i < 5; i++) {
       CandidateBitmap.set(rowBitmaps[i], i);
@@ -51,7 +51,7 @@ class ComparisonIndexTest {
     // Thresholds: row 0=10, row 1=20, row 2=30, row 3=40, row 4=50
     // Row 5 is blank
     // For GTE with input=30: matches rules where input >= threshold
-    int[] sortedValues = {10, 20, 30, 40, 50};
+    long[] sortedValues = {10, 20, 30, 40, 50};
     long[][] rowBitmaps = createRowBitmaps(5, 1);
     for (int i = 0; i < 5; i++) {
       CandidateBitmap.set(rowBitmaps[i], i);
@@ -78,7 +78,7 @@ class ComparisonIndexTest {
   @Test
   void ltReturnsRowsWhereInputIsBelowThreshold() {
     // For LT with input=30: matches rules where input < threshold
-    int[] sortedValues = {10, 20, 30, 40, 50};
+    long[] sortedValues = {10, 20, 30, 40, 50};
     long[][] rowBitmaps = createRowBitmaps(5, 1);
     for (int i = 0; i < 5; i++) {
       CandidateBitmap.set(rowBitmaps[i], i);
@@ -105,7 +105,7 @@ class ComparisonIndexTest {
   @Test
   void lteReturnsRowsWhereInputIsAtOrBelowThreshold() {
     // For LTE with input=30: matches rules where input <= threshold
-    int[] sortedValues = {10, 20, 30, 40, 50};
+    long[] sortedValues = {10, 20, 30, 40, 50};
     long[][] rowBitmaps = createRowBitmaps(5, 1);
     for (int i = 0; i < 5; i++) {
       CandidateBitmap.set(rowBitmaps[i], i);
@@ -135,7 +135,7 @@ class ComparisonIndexTest {
 
   @Test
   void blankRowsAlwaysIncludedInResults() {
-    int[] sortedValues = {100, 200, 300};
+    long[] sortedValues = {100, 200, 300};
     long[][] rowBitmaps = createRowBitmaps(3, 1);
     CandidateBitmap.set(rowBitmaps[0], 0); // row 0 has threshold 100
     CandidateBitmap.set(rowBitmaps[1], 1); // row 1 has threshold 200
@@ -165,7 +165,7 @@ class ComparisonIndexTest {
 
   @Test
   void onlyBlankRowsWhenNoValuesMatch() {
-    int[] sortedValues = {10, 20, 30};
+    long[] sortedValues = {10, 20, 30};
     long[][] rowBitmaps = createRowBitmaps(3, 1);
     for (int i = 0; i < 3; i++) {
       CandidateBitmap.set(rowBitmaps[i], i);
@@ -196,7 +196,7 @@ class ComparisonIndexTest {
 
   @Test
   void emptyIndexReturnsOnlyBlankRows() {
-    int[] sortedValues = {};
+    long[] sortedValues = {};
     long[][] rowBitmaps = new long[0][1];
 
     long[] blankRowBitmap = new long[1];
@@ -216,7 +216,7 @@ class ComparisonIndexTest {
   @Test
   void inputValueNotInSortedValues() {
     // Thresholds: 10, 30, 50 (no 20, 40)
-    int[] sortedValues = {10, 30, 50};
+    long[] sortedValues = {10, 30, 50};
     long[][] rowBitmaps = createRowBitmaps(3, 1);
     CandidateBitmap.set(rowBitmaps[0], 0);
     CandidateBitmap.set(rowBitmaps[1], 1);
@@ -240,7 +240,7 @@ class ComparisonIndexTest {
   @Test
   void inputBelowAllValues() {
     // Thresholds: 100, 200, 300
-    int[] sortedValues = {100, 200, 300};
+    long[] sortedValues = {100, 200, 300};
     long[][] rowBitmaps = createRowBitmaps(3, 1);
     for (int i = 0; i < 3; i++) {
       CandidateBitmap.set(rowBitmaps[i], i);
@@ -264,7 +264,7 @@ class ComparisonIndexTest {
   @Test
   void inputAboveAllValues() {
     // Thresholds: 100, 200, 300
-    int[] sortedValues = {100, 200, 300};
+    long[] sortedValues = {100, 200, 300};
     long[][] rowBitmaps = createRowBitmaps(3, 1);
     for (int i = 0; i < 3; i++) {
       CandidateBitmap.set(rowBitmaps[i], i);
@@ -288,7 +288,7 @@ class ComparisonIndexTest {
   @Test
   void singleValueIndex() {
     // Single threshold: 50
-    int[] sortedValues = {50};
+    long[] sortedValues = {50};
     long[][] rowBitmaps = createRowBitmaps(1, 1);
     CandidateBitmap.set(rowBitmaps[0], 0);
 
@@ -333,7 +333,7 @@ class ComparisonIndexTest {
   @Test
   void memorySizeBytesCalculatesCorrectly() {
     // 5 values, each bitmap has 2 longs
-    int[] sortedValues = {10, 20, 30, 40, 50};
+    long[] sortedValues = {10, 20, 30, 40, 50};
     long[][] rowBitmaps = createRowBitmaps(5, 2);
     long[] blankRowBitmap = new long[2];
 
@@ -352,7 +352,7 @@ class ComparisonIndexTest {
 
   @Test
   void memorySizeHandlesEmptyRowBitmaps() {
-    int[] sortedValues = {};
+    long[] sortedValues = {};
     long[][] rowBitmaps = new long[0][];
     long[] blankRowBitmap = new long[1];
 
@@ -378,7 +378,7 @@ class ComparisonIndexTest {
     int rowCount = 6;
     // Row thresholds: 30, 10, 50, 20, 40, (blank)
     // After sorting: 10(row1), 20(row3), 30(row0), 40(row4), 50(row2)
-    int[] values = {30, 10, 50, 20, 40, 0};
+    long[] values = {30, 10, 50, 20, 40, 0};
     byte[] presence = createPresenceBitmap(rowCount, 0, 1, 2, 3, 4); // Row 5 is blank
 
     ComparisonIndex index = ComparisonIndex.build(values, presence, Operator.GT, rowCount);
@@ -401,7 +401,7 @@ class ComparisonIndexTest {
     int rowCount = 8;
     // Rows 0,3,6 have threshold 100; rows 1,4 have threshold 200; rows 2,5 have threshold 50
     // Row 7 is blank
-    int[] values = {100, 200, 50, 100, 200, 50, 100, 0};
+    long[] values = {100, 200, 50, 100, 200, 50, 100, 0};
     byte[] presence = createPresenceBitmap(rowCount, 0, 1, 2, 3, 4, 5, 6);
 
     ComparisonIndex index = ComparisonIndex.build(values, presence, Operator.GTE, rowCount);
@@ -425,7 +425,7 @@ class ComparisonIndexTest {
   void buildWithLtOperator() {
     int rowCount = 5;
     // Thresholds: 50, 30, 70, 10, 90
-    int[] values = {50, 30, 70, 10, 90};
+    long[] values = {50, 30, 70, 10, 90};
     byte[] presence = createPresenceBitmap(rowCount, 0, 1, 2, 3, 4);
 
     ComparisonIndex index = ComparisonIndex.build(values, presence, Operator.LT, rowCount);
@@ -446,7 +446,7 @@ class ComparisonIndexTest {
   void buildWithLteOperator() {
     int rowCount = 5;
     // Thresholds: 50, 30, 70, 10, 90
-    int[] values = {50, 30, 70, 10, 90};
+    long[] values = {50, 30, 70, 10, 90};
     byte[] presence = createPresenceBitmap(rowCount, 0, 1, 2, 3, 4);
 
     ComparisonIndex index = ComparisonIndex.build(values, presence, Operator.LTE, rowCount);
@@ -466,7 +466,7 @@ class ComparisonIndexTest {
   @Test
   void buildWithAllRowsBlank() {
     int rowCount = 5;
-    int[] values = {0, 0, 0, 0, 0}; // Values don't matter when all blank
+    long[] values = {0, 0, 0, 0, 0}; // Values don't matter when all blank
     byte[] presence = new byte[(rowCount + 7) / 8]; // All zeros = all blank
 
     ComparisonIndex index = ComparisonIndex.build(values, presence, Operator.GT, rowCount);
@@ -480,7 +480,7 @@ class ComparisonIndexTest {
   void buildWithNoBlankRows() {
     int rowCount = 4;
     // Thresholds: 10, 20, 30, 40
-    int[] values = {10, 20, 30, 40};
+    long[] values = {10, 20, 30, 40};
     byte[] presence = createPresenceBitmap(rowCount, 0, 1, 2, 3); // All have conditions
 
     ComparisonIndex index = ComparisonIndex.build(values, presence, Operator.GT, rowCount);
@@ -501,7 +501,7 @@ class ComparisonIndexTest {
   void buildWithSingleRow() {
     int rowCount = 1;
     // Threshold: 42
-    int[] values = {42};
+    long[] values = {42};
     byte[] presence = createPresenceBitmap(rowCount, 0);
 
     ComparisonIndex index = ComparisonIndex.build(values, presence, Operator.GTE, rowCount);
@@ -519,7 +519,7 @@ class ComparisonIndexTest {
   @Test
   void buildWithLargeRowCount() {
     int rowCount = 1000;
-    int[] values = new int[rowCount];
+    long[] values = new long[rowCount];
     byte[] presence = new byte[(rowCount + 7) / 8];
 
     // Create 100 unique values (0-99), with some blanks

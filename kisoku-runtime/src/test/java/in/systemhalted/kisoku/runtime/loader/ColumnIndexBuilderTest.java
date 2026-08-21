@@ -8,6 +8,7 @@ import in.systemhalted.kisoku.api.Kisoku;
 import in.systemhalted.kisoku.api.Schema;
 import in.systemhalted.kisoku.api.compilation.CompileOptions;
 import in.systemhalted.kisoku.api.compilation.CompiledRuleset;
+import in.systemhalted.kisoku.runtime.codec.ValueCodec;
 import in.systemhalted.kisoku.runtime.csv.Operator;
 import in.systemhalted.kisoku.runtime.loader.index.CandidateBitmap;
 import in.systemhalted.kisoku.runtime.loader.index.ColumnIndex;
@@ -90,17 +91,17 @@ class ColumnIndexBuilderTest {
   void inIndexCandidatesIncludeMatchingSetsAndBlanks(@TempDir Path tempDir) throws IOException {
     BinaryArtifactReader reader = compileSetMembershipTable(tempDir);
 
-    // AGE is INTEGER, so set values are stored as raw ints (no dictionary indirection)
+    // AGE is INTEGER, so set members are stored as encoded integer codes (no dictionary lookup)
     SetMembershipIndex index = (SetMembershipIndex) buildIndexFor(reader, "AGE");
 
     // 18 is in R1's set; R3 has a blank AGE cell (always matches)
-    long[] candidates = index.getCandidates(18);
+    long[] candidates = index.getCandidates(ValueCodec.encodeInteger(18));
     assertTrue(CandidateBitmap.isSet(candidates, 0), "R1 contains 18");
     assertFalse(CandidateBitmap.isSet(candidates, 1), "R2 set is (40,50)");
     assertTrue(CandidateBitmap.isSet(candidates, 2), "R3 is blank and always matches");
 
     // 99 is in no set; only the blank row matches
-    long[] unknown = index.getCandidates(99);
+    long[] unknown = index.getCandidates(ValueCodec.encodeInteger(99));
     assertEquals(1, CandidateBitmap.cardinality(unknown));
     assertTrue(CandidateBitmap.isSet(unknown, 2));
   }

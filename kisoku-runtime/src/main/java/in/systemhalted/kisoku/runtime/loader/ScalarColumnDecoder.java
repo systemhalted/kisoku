@@ -12,7 +12,7 @@ import java.nio.ByteBuffer;
  *
  * <pre>
  * presence_bitmap (ceil(row_count/8) bytes)
- * values[row_count] (4 bytes each)
+ * values[row_count] (8 bytes each)
  * </pre>
  *
  * <p>Values are read lazily through the buffer using absolute offsets so the column data stays in
@@ -61,8 +61,8 @@ final class ScalarColumnDecoder implements ColumnDecoder {
     return new ScalarColumnDecoder(column, buffer, base, valuesBase, rowCount, dictionary);
   }
 
-  private int valueAt(int rowIndex) {
-    return buffer.getInt(valuesBase + rowIndex * 4);
+  private long valueAt(int rowIndex) {
+    return buffer.getLong(valuesBase + rowIndex * 8);
   }
 
   @Override
@@ -74,11 +74,13 @@ final class ScalarColumnDecoder implements ColumnDecoder {
       return false; // Absent input cannot satisfy a condition
     }
     return matchesCoerced(
-        rowIndex, TypeCoercion.toComparableInt(inputValue, column.type(), dictionary), true);
+        rowIndex,
+        TypeCoercion.toComparableCode(inputValue, column.type(), column.scale(), dictionary),
+        true);
   }
 
   @Override
-  public boolean matchesCoerced(int rowIndex, int inputInt, boolean present) {
+  public boolean matchesCoerced(int rowIndex, long inputCode, boolean present) {
     if (!hasCondition(rowIndex)) {
       return true; // Blank = no condition, always matches
     }
@@ -86,16 +88,16 @@ final class ScalarColumnDecoder implements ColumnDecoder {
       return false; // Absent input cannot satisfy a condition
     }
 
-    int storedValue = valueAt(rowIndex);
+    long storedValue = valueAt(rowIndex);
 
     Operator op = column.operator();
     return switch (op) {
-      case EQ, SET, RULE_ID, PRIORITY -> storedValue == inputInt;
-      case NE -> storedValue != inputInt;
-      case GT -> inputInt > storedValue;
-      case GTE -> inputInt >= storedValue;
-      case LT -> inputInt < storedValue;
-      case LTE -> inputInt <= storedValue;
+      case EQ, SET, RULE_ID, PRIORITY -> storedValue == inputCode;
+      case NE -> storedValue != inputCode;
+      case GT -> inputCode > storedValue;
+      case GTE -> inputCode >= storedValue;
+      case LT -> inputCode < storedValue;
+      case LTE -> inputCode <= storedValue;
       default -> throw new IllegalStateException("Unexpected operator: " + op);
     };
   }
@@ -110,7 +112,7 @@ final class ScalarColumnDecoder implements ColumnDecoder {
     if (!hasCondition(rowIndex)) {
       return null;
     }
-    return TypeCoercion.decodeValue(valueAt(rowIndex), column.type(), dictionary);
+    return TypeCoercion.decodeValue(valueAt(rowIndex), column.type(), column.scale(), dictionary);
   }
 
   // Package-private accessors for index building. These materialize the column's raw data from the
@@ -119,10 +121,10 @@ final class ScalarColumnDecoder implements ColumnDecoder {
   /**
    * Materializes the values array for index building.
    *
-   * @return the values array (one int per row)
+   * @return the values array (one code per row)
    */
-  int[] values() {
-    int[] out = new int[rowCount];
+  long[] values() {
+    long[] out = new long[rowCount];
     for (int i = 0; i < rowCount; i++) {
       out[i] = valueAt(i);
     }

@@ -24,7 +24,7 @@ import java.util.TreeMap;
  */
 public final class ComparisonIndex implements ColumnIndex {
 
-  private final int[] sortedValues;
+  private final long[] sortedValues;
   private final long[][] rowBitmaps;
   private final Operator operator;
   private final long[] blankRowBitmap;
@@ -38,7 +38,7 @@ public final class ComparisonIndex implements ColumnIndex {
    * @param blankRowBitmap bitmap of rows with blank cells (always match any input)
    */
   public ComparisonIndex(
-      int[] sortedValues, long[][] rowBitmaps, Operator operator, long[] blankRowBitmap) {
+      long[] sortedValues, long[][] rowBitmaps, Operator operator, long[] blankRowBitmap) {
     this.sortedValues = sortedValues.clone();
     this.rowBitmaps = deepClone(rowBitmaps);
     this.operator = operator;
@@ -48,26 +48,26 @@ public final class ComparisonIndex implements ColumnIndex {
   /**
    * Build a ComparisonIndex from raw column data.
    *
-   * @param values the values array from ScalarColumnDecoder
+   * @param values the codes array from ScalarColumnDecoder
    * @param presenceBitmap the presence bitmap (MSB-first encoding)
    * @param operator the comparison operator (GT, GTE, LT, LTE)
    * @param rowCount total number of rows
    * @return the built index
    */
   public static ComparisonIndex build(
-      int[] values, byte[] presenceBitmap, Operator operator, int rowCount) {
+      long[] values, byte[] presenceBitmap, Operator operator, int rowCount) {
     int longCount = CandidateBitmap.longCount(rowCount);
 
     // Track rows with no condition (blank cells)
     long[] noConditionRows = new long[longCount];
 
     // Group rows by value (TreeMap maintains sorted order)
-    var valueToRows = new TreeMap<Integer, long[]>();
+    var valueToRows = new TreeMap<Long, long[]>();
 
     for (int row = 0; row < rowCount; row++) {
       if (isPresent(presenceBitmap, row)) {
         // Row has a condition - add to value's bitmap
-        int value = values[row];
+        long value = values[row];
         long[] bitmap = valueToRows.computeIfAbsent(value, k -> new long[longCount]);
         CandidateBitmap.set(bitmap, row);
       } else {
@@ -77,7 +77,7 @@ public final class ComparisonIndex implements ColumnIndex {
 
     // 5. Convert TreeMap to sorted arrays (sortedValues and rowBitmaps)
     int uniqueCount = valueToRows.size();
-    int[] sortedValues = new int[uniqueCount];
+    long[] sortedValues = new long[uniqueCount];
     long[][] rowBitmaps = new long[uniqueCount][];
 
     int i = 0;
@@ -128,7 +128,7 @@ public final class ComparisonIndex implements ColumnIndex {
    * </ul>
    */
   @Override
-  public long[] getCandidates(int inputValue) {
+  public long[] getCandidates(long inputValue) {
     int idx = lowerBound(sortedValues, inputValue);
 
     int start = 0;
@@ -225,7 +225,7 @@ public final class ComparisonIndex implements ColumnIndex {
    * @param key the value to find the lower bound for
    * @return index of first element >= key, or values.length if none exists
    */
-  private static int lowerBound(int[] values, int key) {
+  private static int lowerBound(long[] values, long key) {
     int lo = 0;
     int hi = values.length;
     while (lo < hi) {

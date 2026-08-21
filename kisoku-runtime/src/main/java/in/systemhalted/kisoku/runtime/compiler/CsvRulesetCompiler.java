@@ -12,6 +12,7 @@ import in.systemhalted.kisoku.api.compilation.CompileOptions;
 import in.systemhalted.kisoku.api.compilation.CompiledRuleset;
 import in.systemhalted.kisoku.api.compilation.RulesetCompiler;
 import in.systemhalted.kisoku.api.evaluation.RuleSelectionPolicy;
+import in.systemhalted.kisoku.runtime.codec.ValueCodec;
 import in.systemhalted.kisoku.runtime.csv.Operator;
 import in.systemhalted.kisoku.runtime.csv.StreamingCsvRowReader;
 import java.io.ByteArrayOutputStream;
@@ -82,8 +83,9 @@ public final class CsvRulesetCompiler implements RulesetCompiler {
     int priorityIndex = findColumnIndex(headerRow, priorityColumnName);
     boolean hasPriority = priorityIndex >= 0 && operators[priorityIndex] == Operator.PRIORITY;
 
-    // Build string dictionary (first pass)
+    // Build string dictionary and per-column decimal scales (first pass)
     StringDictionary dictionary = buildDictionary(headerRow, columns, allRows);
+    int[] scales = computeDecimalScales(columns, allRows);
 
     // Sort rows if using priority
     List<Integer> ruleOrder = buildRuleOrder(allRows, priorityIndex, hasPriority, ruleSelection);
@@ -96,9 +98,9 @@ public final class CsvRulesetCompiler implements RulesetCompiler {
 
     // Encode rule data first so we know each column's byte size, then record the
     // per-column offset (relative to the rule-data section base) in its definition.
-    EncodedRuleData ruleData = encodeRuleData(columns, orderedRows, dictionary);
+    EncodedRuleData ruleData = encodeRuleData(columns, orderedRows, dictionary, scales);
     byte[] columnDefinitionsBytes =
-        encodeColumnDefinitions(columns, dictionary, ruleData.columnOffsets());
+        encodeColumnDefinitions(columns, dictionary, ruleData.columnOffsets(), scales);
     byte[] ruleDataBytes = ruleData.bytes();
     byte[] ruleOrderBytes = encodeRuleOrder(orderedRows.size(), hasPriority, ruleSelection);
     byte[] dictionaryBytes = dictionary.serialize();
@@ -210,17 +212,18 @@ public final class CsvRulesetCompiler implements RulesetCompiler {
           continue;
         }
 
-        // For set operators, parse and add individual values
+        // Only STRING values are dictionary-encoded. DECIMAL and TIMESTAMP are stored as
+        // order-preserving numbers, so they neither enter the dictionary nor inflate it.
+        if (col.type != ColumnType.STRING) {
+          continue;
+        }
+
         if (col.operator == Operator.IN || col.operator == Operator.NOT_IN) {
           addSetValuesToDictionary(value, dictionary);
-        }
-        // For range operators, parse and add min/max
-        else if (isRangeOperator(col.operator)) {
-          addRangeValuesToDictionary(value, col.type, dictionary);
-        }
-        // For scalar string/decimal types, add directly
-        else if (col.type == ColumnType.STRING || col.type == ColumnType.DECIMAL) {
-          dictionary.add(value);
+        } else if (isRangeOperator(col.operator)) {
+          addRangeValuesToDictionary(value, dictionary);
+        } else {
+          dictionary.add(value.trim());
         }
       }
     }
@@ -241,11 +244,7 @@ public final class CsvRulesetCompiler implements RulesetCompiler {
     }
   }
 
-  private void addRangeValuesToDictionary(
-      String value, ColumnType type, StringDictionary dictionary) {
-    if (type != ColumnType.STRING && type != ColumnType.DECIMAL) {
-      return;
-    }
+  private void addRangeValuesToDictionary(String value, StringDictionary dictionary) {
     if (!value.startsWith("(") || !value.endsWith(")")) {
       return;
     }
@@ -255,6 +254,63 @@ public final class CsvRulesetCompiler implements RulesetCompiler {
       dictionary.add(parts[0].trim());
       dictionary.add(parts[1].trim());
     }
+  }
+
+  /**
+   * Determines each DECIMAL column's storage scale as the widest scale that appears in it, so every
+   * cell in the column is representable exactly. Non-DECIMAL columns get 0.
+   *
+   * @param columns the column definitions
+   * @param rows all data rows
+   * @return per-column scale, positionally aligned with {@code columns}
+   */
+  private int[] computeDecimalScales(List<ColumnInfo> columns, List<String[]> rows) {
+    int[] scales = new int[columns.size()];
+    for (int c = 0; c < columns.size(); c++) {
+      ColumnInfo col = columns.get(c);
+      if (col.type != ColumnType.DECIMAL) {
+        continue;
+      }
+      int scale = 0;
+      for (String[] row : rows) {
+        if (col.originalIndex >= row.length) {
+          continue;
+        }
+        String value = row[col.originalIndex];
+        if (value == null || value.isEmpty()) {
+          continue;
+        }
+        for (String operand : splitOperands(value)) {
+          try {
+            scale = Math.max(scale, ValueCodec.scaleOf(operand));
+          } catch (NumberFormatException e) {
+            throw new CompilationException(
+                "Column '" + col.name + "' is DECIMAL but holds '" + operand + "'", e);
+          }
+        }
+      }
+      scales[c] = scale;
+    }
+    return scales;
+  }
+
+  /** Splits a cell into its operands: a bare scalar, or the members of a {@code (a,b,c)} cell. */
+  private List<String> splitOperands(String value) {
+    String trimmed = value.trim();
+    if (!trimmed.startsWith("(") || !trimmed.endsWith(")")) {
+      return List.of(trimmed);
+    }
+    String inner = trimmed.substring(1, trimmed.length() - 1);
+    if (inner.isBlank()) {
+      return List.of();
+    }
+    List<String> operands = new ArrayList<>();
+    for (String part : inner.split(",")) {
+      if (!part.isBlank()) {
+        operands.add(part.trim());
+      }
+    }
+    return operands;
   }
 
   private boolean isRangeOperator(Operator op) {
@@ -294,7 +350,7 @@ public final class CsvRulesetCompiler implements RulesetCompiler {
   }
 
   private byte[] encodeColumnDefinitions(
-      List<ColumnInfo> columns, StringDictionary dictionary, int[] columnOffsets) {
+      List<ColumnInfo> columns, StringDictionary dictionary, int[] columnOffsets, int[] scales) {
     ByteArrayOutputStream baos = new ByteArrayOutputStream();
 
     for (int c = 0; c < columns.size(); c++) {
@@ -306,7 +362,7 @@ public final class CsvRulesetCompiler implements RulesetCompiler {
 
       byte[] colDef =
           BinaryArtifactWriter.writeColumnDefinition(
-              nameId, operatorOrdinal, typeOrdinal, col.role, flags, columnOffsets[c]);
+              nameId, operatorOrdinal, typeOrdinal, col.role, flags, columnOffsets[c], scales[c]);
       try {
         baos.write(colDef);
       } catch (IOException e) {
@@ -321,7 +377,7 @@ public final class CsvRulesetCompiler implements RulesetCompiler {
   private record EncodedRuleData(byte[] bytes, int[] columnOffsets) {}
 
   private EncodedRuleData encodeRuleData(
-      List<ColumnInfo> columns, List<String[]> rows, StringDictionary dictionary) {
+      List<ColumnInfo> columns, List<String[]> rows, StringDictionary dictionary, int[] scales) {
     ByteArrayOutputStream baos = new ByteArrayOutputStream();
     int[] columnOffsets = new int[columns.size()];
 
@@ -340,7 +396,7 @@ public final class CsvRulesetCompiler implements RulesetCompiler {
     for (int c = 0; c < columns.size(); c++) {
       ColumnInfo col = columns.get(c);
       columnOffsets[c] = offset;
-      ColumnEncoder encoder = createEncoder(col.operator, dictionary, col.type);
+      ColumnEncoder encoder = createEncoder(col.operator, dictionary, col.type, scales[c]);
       byte[] encoded = encoder.encode(projectedRows, c);
       try {
         baos.write(encoded);
@@ -354,12 +410,12 @@ public final class CsvRulesetCompiler implements RulesetCompiler {
   }
 
   private ColumnEncoder createEncoder(
-      Operator operator, StringDictionary dictionary, ColumnType type) {
+      Operator operator, StringDictionary dictionary, ColumnType type, int scale) {
     return switch (operator) {
-      case IN, NOT_IN -> new SetColumnEncoder(dictionary, type);
+      case IN, NOT_IN -> new SetColumnEncoder(dictionary, type, scale);
       case BETWEEN_INCLUSIVE, BETWEEN_EXCLUSIVE, NOT_BETWEEN_INCLUSIVE, NOT_BETWEEN_EXCLUSIVE ->
-          new RangeColumnEncoder(dictionary, type);
-      default -> new ScalarColumnEncoder(dictionary, type);
+          new RangeColumnEncoder(dictionary, type, scale);
+      default -> new ScalarColumnEncoder(dictionary, type, scale);
     };
   }
 

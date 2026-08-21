@@ -18,14 +18,14 @@ import java.util.Map;
  * / 64 shared structure).
  */
 public final class SetMembershipIndex implements ColumnIndex {
-  private final Map<Integer, long[]> valueToRowBitmap;
+  private final Map<Long, long[]> valueToRowBitmap;
   private final long[] noConditionRows;
   private final long[] allConditionRows;
   private final Operator operator;
   private final int rowCount;
 
   private SetMembershipIndex(
-      Map<Integer, long[]> valueToRowBitmap,
+      Map<Long, long[]> valueToRowBitmap,
       long[] noConditionRows,
       long[] allConditionRows,
       Operator operator,
@@ -51,7 +51,7 @@ public final class SetMembershipIndex implements ColumnIndex {
   public static SetMembershipIndex build(
       int[] listOffsets,
       short[] listLengths,
-      int[] allValues,
+      long[] allValues,
       byte[] presenceBitmap,
       Operator operator,
       int rowCount) {
@@ -64,7 +64,7 @@ public final class SetMembershipIndex implements ColumnIndex {
     long[] allConditionRows = new long[longCount];
 
     // Map each unique value to rows containing it
-    Map<Integer, long[]> valueToRows = new HashMap<>();
+    Map<Long, long[]> valueToRows = new HashMap<>();
 
     for (int row = 0; row < rowCount; row++) {
       if (isPresent(presenceBitmap, row)) {
@@ -76,7 +76,7 @@ public final class SetMembershipIndex implements ColumnIndex {
         int length = listLengths[row] & 0xFFFF; // Convert signed short to unsigned
 
         for (int i = 0; i < length; i++) {
-          int value = allValues[offset + i];
+          long value = allValues[offset + i];
           long[] bitmap = valueToRows.computeIfAbsent(value, k -> new long[longCount]);
           CandidateBitmap.set(bitmap, row);
         }
@@ -99,7 +99,7 @@ public final class SetMembershipIndex implements ColumnIndex {
    * rows. This is computed as (allConditionRows ANDNOT valueMatch) OR noConditionRows.
    */
   @Override
-  public long[] getCandidates(int inputValue) {
+  public long[] getCandidates(long inputValue) {
     long[] valueMatch = valueToRowBitmap.get(inputValue);
 
     if (operator == Operator.IN) {

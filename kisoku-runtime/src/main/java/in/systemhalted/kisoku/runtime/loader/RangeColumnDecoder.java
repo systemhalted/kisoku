@@ -13,8 +13,8 @@ import java.nio.ByteBuffer;
  *
  * <pre>
  * presence_bitmap (ceil(row_count/8) bytes)
- * min_values[row_count] (4 bytes each)
- * max_values[row_count] (4 bytes each)
+ * min_values[row_count] (8 bytes each)
+ * max_values[row_count] (8 bytes each)
  * </pre>
  *
  * <p>Values are read lazily through the buffer using absolute offsets (no on-heap copy, position
@@ -59,7 +59,7 @@ final class RangeColumnDecoder implements ColumnDecoder {
       int rowCount,
       StringDictionaryReader dictionary) {
     int minBase = base + BitMapUtils.bitmapSize(rowCount);
-    int maxBase = minBase + rowCount * 4;
+    int maxBase = minBase + rowCount * 8;
     return new RangeColumnDecoder(column, buffer, base, minBase, maxBase, dictionary);
   }
 
@@ -72,11 +72,13 @@ final class RangeColumnDecoder implements ColumnDecoder {
       return false; // Absent input cannot satisfy a condition
     }
     return matchesCoerced(
-        rowIndex, TypeCoercion.toComparableInt(inputValue, column.type(), dictionary), true);
+        rowIndex,
+        TypeCoercion.toComparableCode(inputValue, column.type(), column.scale(), dictionary),
+        true);
   }
 
   @Override
-  public boolean matchesCoerced(int rowIndex, int inputInt, boolean present) {
+  public boolean matchesCoerced(int rowIndex, long inputCode, boolean present) {
     if (!hasCondition(rowIndex)) {
       return true; // Blank = no condition, always matches
     }
@@ -84,15 +86,15 @@ final class RangeColumnDecoder implements ColumnDecoder {
       return false; // Absent input cannot satisfy a condition
     }
 
-    int min = buffer.getInt(minBase + rowIndex * 4);
-    int max = buffer.getInt(maxBase + rowIndex * 4);
+    long min = buffer.getLong(minBase + rowIndex * 8);
+    long max = buffer.getLong(maxBase + rowIndex * 8);
 
     Operator op = column.operator();
     return switch (op) {
-      case BETWEEN_INCLUSIVE -> inputInt >= min && inputInt <= max;
-      case BETWEEN_EXCLUSIVE -> inputInt > min && inputInt < max;
-      case NOT_BETWEEN_INCLUSIVE -> inputInt < min || inputInt > max;
-      case NOT_BETWEEN_EXCLUSIVE -> inputInt <= min || inputInt >= max;
+      case BETWEEN_INCLUSIVE -> inputCode >= min && inputCode <= max;
+      case BETWEEN_EXCLUSIVE -> inputCode > min && inputCode < max;
+      case NOT_BETWEEN_INCLUSIVE -> inputCode < min || inputCode > max;
+      case NOT_BETWEEN_EXCLUSIVE -> inputCode <= min || inputCode >= max;
       default -> throw new IllegalStateException("Unexpected operator: " + op);
     };
   }

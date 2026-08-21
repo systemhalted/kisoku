@@ -13,6 +13,8 @@ import in.systemhalted.kisoku.runtime.csv.Operator;
  * @param role the column role (INPUT, OUTPUT, METADATA)
  * @param flags bit flags (0x01=nullable, 0x02=test-only)
  * @param dataOffset byte offset within the rule data section
+ * @param scale decimal scale for DECIMAL columns (the number of fractional digits every stored
+ *     value in the column is encoded at), 0 for every other type
  */
 record ColumnDefinition(
     int nameId,
@@ -21,7 +23,8 @@ record ColumnDefinition(
     ColumnType type,
     ColumnRole role,
     int flags,
-    int dataOffset) {
+    int dataOffset,
+    int scale) {
 
   /** Flag indicating the column allows null values. */
   static final int FLAG_NULLABLE = 0x01;

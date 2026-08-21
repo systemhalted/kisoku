@@ -1,6 +1,7 @@
 package in.systemhalted.kisoku.runtime.compiler;
 
 import in.systemhalted.kisoku.api.ColumnType;
+import in.systemhalted.kisoku.api.compilation.CompilationException;
 import java.io.ByteArrayOutputStream;
 import java.io.DataOutputStream;
 import java.util.ArrayList;
@@ -17,13 +18,16 @@ import java.util.List;
  * presence_bitmap (ceil(row_count/8) bytes)
  * list_offsets[row_count] (4 bytes each)
  * list_lengths[row_count] (2 bytes each)
- * all_values[] (4 bytes each)
+ * all_values[] (8 bytes each)
  * </pre>
  */
 final class SetColumnEncoder extends ColumnEncoder {
 
-  SetColumnEncoder(StringDictionary dictionary, ColumnType columnType) {
-    super(dictionary, columnType);
+  /** Widest set a row can hold, bounded by the 16-bit length field. */
+  private static final int MAX_SET_SIZE = 0xFFFF;
+
+  SetColumnEncoder(StringDictionary dictionary, ColumnType columnType, int scale) {
+    super(dictionary, columnType, scale);
   }
 
   @Override
@@ -36,25 +40,22 @@ final class SetColumnEncoder extends ColumnEncoder {
     writeOrThrow(dos, d -> d.write(bitmap));
 
     // Parse all sets and collect values
-    List<int[]> parsedSets = new ArrayList<>();
-    List<Integer> allValues = new ArrayList<>();
-
+    List<long[]> parsedSets = new ArrayList<>(rows.size());
     for (String[] row : rows) {
-      String value = row[columnIndex];
-      int[] setValues = parseSet(value);
-      parsedSets.add(setValues);
+      parsedSets.add(parseSet(row[columnIndex]));
     }
 
     // Calculate offsets and build all_values array
     int[] offsets = new int[rows.size()];
     short[] lengths = new short[rows.size()];
+    List<Long> allValues = new ArrayList<>();
     int currentOffset = 0;
 
     for (int i = 0; i < parsedSets.size(); i++) {
-      int[] setValues = parsedSets.get(i);
+      long[] setValues = parsedSets.get(i);
       offsets[i] = currentOffset;
       lengths[i] = (short) setValues.length;
-      for (int v : setValues) {
+      for (long v : setValues) {
         allValues.add(v);
       }
       currentOffset += setValues.length;
@@ -71,8 +72,8 @@ final class SetColumnEncoder extends ColumnEncoder {
     }
 
     // Write all_values
-    for (int v : allValues) {
-      writeOrThrow(dos, d -> d.writeInt(v));
+    for (long v : allValues) {
+      writeOrThrow(dos, d -> d.writeLong(v));
     }
 
     return baos.toByteArray();
@@ -82,37 +83,32 @@ final class SetColumnEncoder extends ColumnEncoder {
    * Parses a set value in (a,b,c) format.
    *
    * @param value the cell value, e.g., "(APAC,EMEA)"
-   * @return int array of encoded values, or empty array if blank
+   * @return the encoded member codes, or an empty array if blank
    */
-  private int[] parseSet(String value) {
+  private long[] parseSet(String value) {
     if (!isPresent(value)) {
-      return new int[0];
+      return new long[0];
     }
 
     String trimmed = value.trim();
     if (!trimmed.startsWith("(") || !trimmed.endsWith(")")) {
-      throw new IllegalArgumentException("Set must be in (a,b,c) format: " + value);
+      throw new CompilationException("Set must be in (a,b,c) format: " + value);
     }
 
     String inner = trimmed.substring(1, trimmed.length() - 1);
     if (inner.isEmpty()) {
-      return new int[0];
+      return new long[0];
     }
 
     String[] parts = inner.split(",");
-    int[] result = new int[parts.length];
+    if (parts.length > MAX_SET_SIZE) {
+      throw new CompilationException(
+          "Set has " + parts.length + " members, which exceeds the limit of " + MAX_SET_SIZE);
+    }
+    long[] result = new long[parts.length];
     for (int i = 0; i < parts.length; i++) {
-      result[i] = encodeSetValue(parts[i].trim());
+      result[i] = encodeCell(parts[i]);
     }
     return result;
-  }
-
-  private int encodeSetValue(String value) {
-    return switch (columnType) {
-      case STRING -> dictionary.getId(value);
-      case INTEGER -> parseInteger(value);
-      case DECIMAL -> dictionary.getId(value);
-      default -> throw new IllegalArgumentException("Unsupported set type: " + columnType);
-    };
   }
 }

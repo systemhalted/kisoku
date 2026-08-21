@@ -1,6 +1,7 @@
 package in.systemhalted.kisoku.runtime.compiler;
 
 import in.systemhalted.kisoku.api.ColumnType;
+import in.systemhalted.kisoku.api.compilation.CompilationException;
 import java.io.ByteArrayOutputStream;
 import java.io.DataOutputStream;
 import java.util.List;
@@ -15,14 +16,14 @@ import java.util.List;
  *
  * <pre>
  * presence_bitmap (ceil(row_count/8) bytes)
- * min_values[row_count] (4 bytes each)
- * max_values[row_count] (4 bytes each)
+ * min_values[row_count] (8 bytes each)
+ * max_values[row_count] (8 bytes each)
  * </pre>
  */
 final class RangeColumnEncoder extends ColumnEncoder {
 
-  RangeColumnEncoder(StringDictionary dictionary, ColumnType columnType) {
-    super(dictionary, columnType);
+  RangeColumnEncoder(StringDictionary dictionary, ColumnType columnType, int scale) {
+    super(dictionary, columnType, scale);
   }
 
   @Override
@@ -35,22 +36,21 @@ final class RangeColumnEncoder extends ColumnEncoder {
     writeOrThrow(dos, d -> d.write(bitmap));
 
     // Parse all ranges first
-    int[][] ranges = new int[rows.size()][2];
+    long[][] ranges = new long[rows.size()][2];
     for (int i = 0; i < rows.size(); i++) {
-      String value = rows.get(i)[columnIndex];
-      ranges[i] = parseRange(value);
+      ranges[i] = parseRange(rows.get(i)[columnIndex]);
     }
 
     // Write min values
-    for (int[] range : ranges) {
-      int min = range[0];
-      writeOrThrow(dos, d -> d.writeInt(min));
+    for (long[] range : ranges) {
+      long min = range[0];
+      writeOrThrow(dos, d -> d.writeLong(min));
     }
 
     // Write max values
-    for (int[] range : ranges) {
-      int max = range[1];
-      writeOrThrow(dos, d -> d.writeInt(max));
+    for (long[] range : ranges) {
+      long max = range[1];
+      writeOrThrow(dos, d -> d.writeLong(max));
     }
 
     return baos.toByteArray();
@@ -60,48 +60,24 @@ final class RangeColumnEncoder extends ColumnEncoder {
    * Parses a range value in (min,max) format.
    *
    * @param value the cell value, e.g., "(18,29)"
-   * @return int array with [min, max], or [0, 0] if empty
+   * @return two codes, [min, max], or [0, 0] if blank
    */
-  private int[] parseRange(String value) {
+  private long[] parseRange(String value) {
     if (!isPresent(value)) {
-      return new int[] {0, 0};
+      return new long[] {0L, 0L};
     }
 
     String trimmed = value.trim();
     if (!trimmed.startsWith("(") || !trimmed.endsWith(")")) {
-      throw new IllegalArgumentException("Range must be in (min,max) format: " + value);
+      throw new CompilationException("Range must be in (min,max) format: " + value);
     }
 
     String inner = trimmed.substring(1, trimmed.length() - 1);
     String[] parts = inner.split(",", 2);
     if (parts.length != 2) {
-      throw new IllegalArgumentException("Range must have exactly two parts: " + value);
+      throw new CompilationException("Range must have exactly two parts: " + value);
     }
 
-    int min = encodeRangeValue(parts[0].trim());
-    int max = encodeRangeValue(parts[1].trim());
-    return new int[] {min, max};
-  }
-
-  private int encodeRangeValue(String value) {
-    return switch (columnType) {
-      case STRING -> dictionary.getId(value);
-      case INTEGER -> parseInteger(value);
-      case DECIMAL -> dictionary.getId(value);
-      case DATE -> encodeDateAsDays(value);
-      default -> throw new IllegalArgumentException("Unsupported range type: " + columnType);
-    };
-  }
-
-  private int encodeDateAsDays(String value) {
-    if (value == null || value.isEmpty()) {
-      return 0;
-    }
-    try {
-      java.time.LocalDate date = java.time.LocalDate.parse(value.trim());
-      return (int) date.toEpochDay();
-    } catch (java.time.format.DateTimeParseException e) {
-      throw new IllegalArgumentException("Invalid date format: " + value, e);
-    }
+    return new long[] {encodeCell(parts[0]), encodeCell(parts[1])};
   }
 }

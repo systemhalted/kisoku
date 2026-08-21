@@ -3,6 +3,7 @@ package in.systemhalted.kisoku.runtime.loader;
 import static org.junit.jupiter.api.Assertions.*;
 
 import in.systemhalted.kisoku.api.ColumnType;
+import in.systemhalted.kisoku.runtime.codec.ValueCodec;
 import in.systemhalted.kisoku.runtime.csv.Operator;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
@@ -16,7 +17,7 @@ class LazyDecoderTest {
 
   private static final int ROW_COUNT = 10;
 
-  // A non-zero, non-4-aligned base so getInt() lands on unaligned byte offsets.
+  // A non-zero, non-8-aligned base so getLong() lands on unaligned byte offsets.
   private static final int BASE = 5;
 
   private StringDictionaryReader emptyDictionary() {
@@ -38,20 +39,20 @@ class LazyDecoderTest {
   }
 
   private ColumnDefinition intColumn(Operator op) {
-    return new ColumnDefinition(1, "AGE", op, ColumnType.INTEGER, ColumnRole.INPUT, 0x01, 0);
+    return new ColumnDefinition(1, "AGE", op, ColumnType.INTEGER, ColumnRole.INPUT, 0x01, 0, 0);
   }
 
   @Test
   void scalarDecoderReadsValuesAtAbsoluteOffset() {
     int bitmapSize = BitMapUtils.bitmapSize(ROW_COUNT);
     ByteBuffer buf =
-        ByteBuffer.allocate(BASE + bitmapSize + ROW_COUNT * 4).order(ByteOrder.BIG_ENDIAN);
+        ByteBuffer.allocate(BASE + bitmapSize + ROW_COUNT * 8).order(ByteOrder.BIG_ENDIAN);
 
     // Rows 0,1,3,9 have conditions; the rest are blank.
     writeBitmap(buf, BASE, 0, 1, 3, 9);
-    int[] values = {30, 40, 0, 65, 0, 0, 0, 0, 0, 18};
+    long[] values = {30, 40, 0, 65, 0, 0, 0, 0, 0, 18};
     for (int i = 0; i < ROW_COUNT; i++) {
-      buf.putInt(BASE + bitmapSize + i * 4, values[i]);
+      buf.putLong(BASE + bitmapSize + i * 8, ValueCodec.encodeInteger(values[i]));
     }
 
     ScalarColumnDecoder decoder =
@@ -66,7 +67,7 @@ class LazyDecoderTest {
     assertTrue(decoder.matches(4, -999));
     assertFalse(decoder.hasCondition(4));
     assertTrue(decoder.hasCondition(9));
-    assertEquals(18, decoder.getValue(9));
+    assertEquals(18L, decoder.getValue(9));
     assertNull(decoder.getValue(4));
   }
 
@@ -74,15 +75,15 @@ class LazyDecoderTest {
   void rangeDecoderReadsMinMaxAtAbsoluteOffset() {
     int bitmapSize = BitMapUtils.bitmapSize(ROW_COUNT);
     ByteBuffer buf =
-        ByteBuffer.allocate(BASE + bitmapSize + ROW_COUNT * 4 * 2).order(ByteOrder.BIG_ENDIAN);
+        ByteBuffer.allocate(BASE + bitmapSize + ROW_COUNT * 8 * 2).order(ByteOrder.BIG_ENDIAN);
 
     writeBitmap(buf, BASE, 0, 2);
     int minBase = BASE + bitmapSize;
-    int maxBase = minBase + ROW_COUNT * 4;
-    buf.putInt(minBase + 0 * 4, 18);
-    buf.putInt(maxBase + 0 * 4, 65);
-    buf.putInt(minBase + 2 * 4, 21);
-    buf.putInt(maxBase + 2 * 4, 30);
+    int maxBase = minBase + ROW_COUNT * 8;
+    buf.putLong(minBase + 0 * 8, ValueCodec.encodeInteger(18));
+    buf.putLong(maxBase + 0 * 8, ValueCodec.encodeInteger(65));
+    buf.putLong(minBase + 2 * 8, ValueCodec.encodeInteger(21));
+    buf.putLong(maxBase + 2 * 8, ValueCodec.encodeInteger(30));
 
     RangeColumnDecoder decoder =
         RangeColumnDecoder.create(
@@ -102,7 +103,7 @@ class LazyDecoderTest {
     // Row 0 set = {10,20,30}; row 1 set = {40}; rest blank. all_values length = 4.
     int totalValues = 4;
     ByteBuffer buf =
-        ByteBuffer.allocate(BASE + bitmapSize + ROW_COUNT * 4 + ROW_COUNT * 2 + totalValues * 4)
+        ByteBuffer.allocate(BASE + bitmapSize + ROW_COUNT * 4 + ROW_COUNT * 2 + totalValues * 8)
             .order(ByteOrder.BIG_ENDIAN);
 
     writeBitmap(buf, BASE, 0, 1);
@@ -114,9 +115,9 @@ class LazyDecoderTest {
     buf.putShort(lengthsBase + 0 * 2, (short) 3); // length 3
     buf.putInt(offsetsBase + 1 * 4, 3); // row 1 starts at 3
     buf.putShort(lengthsBase + 1 * 2, (short) 1); // length 1
-    int[] all = {10, 20, 30, 40};
+    long[] all = {10, 20, 30, 40};
     for (int i = 0; i < all.length; i++) {
-      buf.putInt(valuesBase + i * 4, all[i]);
+      buf.putLong(valuesBase + i * 8, ValueCodec.encodeInteger(all[i]));
     }
 
     SetMembershipColumnDecoder decoder =
@@ -134,23 +135,23 @@ class LazyDecoderTest {
   void matchesCoercedAgreesWithMatchesForIntegerColumns() {
     int bitmapSize = BitMapUtils.bitmapSize(ROW_COUNT);
     ByteBuffer buf =
-        ByteBuffer.allocate(BASE + bitmapSize + ROW_COUNT * 4).order(ByteOrder.BIG_ENDIAN);
+        ByteBuffer.allocate(BASE + bitmapSize + ROW_COUNT * 8).order(ByteOrder.BIG_ENDIAN);
     writeBitmap(buf, BASE, 0, 1, 3, 9);
-    int[] values = {30, 40, 0, 65, 0, 0, 0, 0, 0, 18};
+    long[] values = {30, 40, 0, 65, 0, 0, 0, 0, 0, 18};
     for (int i = 0; i < ROW_COUNT; i++) {
-      buf.putInt(BASE + bitmapSize + i * 4, values[i]);
+      buf.putLong(BASE + bitmapSize + i * 8, ValueCodec.encodeInteger(values[i]));
     }
 
     ScalarColumnDecoder decoder =
         ScalarColumnDecoder.create(
             intColumn(Operator.GTE), buf, BASE, ROW_COUNT, emptyDictionary());
 
-    // For INTEGER columns the coerced int is the raw value, so matchesCoerced must mirror matches.
+    // matchesCoerced must mirror matches when handed the same value's code.
     for (int row = 0; row < ROW_COUNT; row++) {
       for (int v : new int[] {17, 18, 30, 65, 100}) {
         assertEquals(
             decoder.matches(row, v),
-            decoder.matchesCoerced(row, v, true),
+            decoder.matchesCoerced(row, ValueCodec.encodeInteger(v), true),
             "row " + row + " value " + v);
       }
     }

@@ -1,23 +1,36 @@
 package in.systemhalted.kisoku.runtime.compiler;
 
 import in.systemhalted.kisoku.api.ColumnType;
+import in.systemhalted.kisoku.api.compilation.CompilationException;
+import in.systemhalted.kisoku.runtime.codec.ComparableCodes;
+import in.systemhalted.kisoku.runtime.codec.ValueCodec;
 import java.io.ByteArrayOutputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
+import java.math.BigDecimal;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.format.DateTimeParseException;
 import java.util.List;
 
 /**
  * Base class for encoding column data in columnar format.
  *
- * <p>Each encoder produces a presence bitmap followed by encoded values.
+ * <p>Each encoder produces a presence bitmap followed by encoded values. Every cell is reduced to
+ * the order-preserving {@code long} domain of {@link ComparableCodes}, so a stored code can be
+ * compared directly against a coerced input code by any operator, ordering operators included.
  */
 abstract class ColumnEncoder {
   protected final StringDictionary dictionary;
   protected final ColumnType columnType;
 
-  ColumnEncoder(StringDictionary dictionary, ColumnType columnType) {
+  /** Decimal scale for DECIMAL columns; 0 for every other type. */
+  protected final int scale;
+
+  ColumnEncoder(StringDictionary dictionary, ColumnType columnType, int scale) {
     this.dictionary = dictionary;
     this.columnType = columnType;
+    this.scale = scale;
   }
 
   /**
@@ -74,42 +87,45 @@ abstract class ColumnEncoder {
   }
 
   /**
-   * Encodes a string value as a dictionary ID.
+   * Encodes one cell operand into its order-preserving code.
    *
-   * @param value the string value
-   * @return dictionary ID (0 for null/empty)
+   * @param value the cell text, or null/empty for a blank cell
+   * @return the code, or {@link ComparableCodes#NULL_CODE} for a blank cell
    */
-  protected int encodeToDictionaryId(String value) {
-    if (value == null || value.isEmpty()) {
-      return StringDictionary.NULL_ID;
+  protected long encodeCell(String value) {
+    if (!isPresent(value)) {
+      return ComparableCodes.NULL_CODE;
     }
-    return dictionary.getId(value);
+    String text = value.trim();
+    try {
+      return switch (columnType) {
+        case STRING -> dictionary.codeFor(text);
+        case INTEGER -> ValueCodec.encodeInteger(Long.parseLong(text));
+        case DECIMAL -> ValueCodec.encodeDecimal(new BigDecimal(text), scale);
+        case BOOLEAN -> ValueCodec.encodeBoolean(parseBoolean(text));
+        case DATE -> ValueCodec.encodeDate(LocalDate.parse(text));
+        case TIMESTAMP -> ValueCodec.encodeTimestamp(parseTimestamp(text));
+      };
+    } catch (NumberFormatException | DateTimeParseException e) {
+      throw new CompilationException(
+          "Value '" + text + "' is not a valid " + columnType + ": " + e.getMessage(), e);
+    }
   }
 
-  /**
-   * Parses an integer value from a string.
-   *
-   * @param value the string value
-   * @return parsed integer, or 0 if null/empty
-   */
-  protected int parseInteger(String value) {
-    if (value == null || value.isEmpty()) {
-      return 0;
-    }
-    return Integer.parseInt(value.trim());
+  private boolean parseBoolean(String value) {
+    String lower = value.toLowerCase();
+    return "true".equals(lower) || "1".equals(lower) || "yes".equals(lower);
   }
 
-  /**
-   * Parses a long value from a string.
-   *
-   * @param value the string value
-   * @return parsed long, or 0 if null/empty
-   */
-  protected long parseLong(String value) {
-    if (value == null || value.isEmpty()) {
-      return 0;
+  private Instant parseTimestamp(String value) {
+    Instant instant = Instant.parse(value);
+    if (instant.getNano() % 1000 != 0) {
+      throw new CompilationException(
+          "Timestamp '"
+              + value
+              + "' has sub-microsecond precision, which the artifact cannot store");
     }
-    return Long.parseLong(value.trim());
+    return instant;
   }
 
   /**

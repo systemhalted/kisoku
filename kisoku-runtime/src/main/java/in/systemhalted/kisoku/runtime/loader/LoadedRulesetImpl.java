@@ -162,13 +162,13 @@ final class LoadedRulesetImpl implements LoadedRuleset {
       }
 
       // An absent input can only be satisfied by blank cells; a supplied value goes through the
-      // index. The two cases are distinct even though both may coerce to NULL_ID.
+      // index. The two cases are distinct even though both may coerce to NULL_CODE.
       Object inputValue = input.get(col.name()).orElse(null);
       long[] colCandidates =
           inputValue == null
               ? index.candidatesForAbsentInput()
               : index.getCandidates(
-                  TypeCoercion.toComparableInt(inputValue, col.type(), dictionary));
+                  TypeCoercion.toComparableCode(inputValue, col.type(), col.scale(), dictionary));
       CandidateBitmap.andInPlace(candidates, colCandidates);
 
       // Early termination if no candidates remain

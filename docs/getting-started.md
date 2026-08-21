@@ -132,7 +132,7 @@ try (LoadedRuleset ruleset = Kisoku.loader().load(compiled, LoadOptions.memoryMa
   DecisionOutput output = ruleset.evaluate(input);
 
   System.out.println(output.ruleId());            // -> "R1"
-  System.out.println(output.outputs().get("DISCOUNT")); // -> "0.20"
+  System.out.println(output.outputs().get("DISCOUNT")); // -> 0.20 (BigDecimal)
 }
 ```
 

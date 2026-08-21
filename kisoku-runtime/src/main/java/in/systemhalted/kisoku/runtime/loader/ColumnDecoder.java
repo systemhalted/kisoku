@@ -28,8 +28,8 @@ sealed interface ColumnDecoder
   /**
    * Check if an already-coerced input value matches the condition at the given row.
    *
-   * <p>Equivalent to {@link #matches(int, Object)} but takes the comparable int produced by {@link
-   * TypeCoercion#toComparableInt} directly, skipping per-call coercion. The columnar bulk kernel
+   * <p>Equivalent to {@link #matches(int, Object)} but takes the comparable code produced by {@link
+   * TypeCoercion#toComparableCode} directly, skipping per-call coercion. The columnar bulk kernel
    * uses this to verify survivors from a batch of pre-coerced codes without re-coercing.
    *
    * <p>{@code present} must be carried alongside the code because the coerced domain cannot express
@@ -37,11 +37,11 @@ sealed interface ColumnDecoder
    * only the latter may satisfy a condition.
    *
    * @param rowIndex the row to check
-   * @param coercedValue the input value already coerced to its comparable int
+   * @param coercedValue the input value already coerced to its comparable code
    * @param present whether the input actually supplied a value for this column
    * @return true if matches, false otherwise
    */
-  boolean matchesCoerced(int rowIndex, int coercedValue, boolean present);
+  boolean matchesCoerced(int rowIndex, long coercedValue, boolean present);
 
   /**
    * Check if this row has a condition (not blank).
