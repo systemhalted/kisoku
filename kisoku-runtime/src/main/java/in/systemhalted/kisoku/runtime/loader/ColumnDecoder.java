@@ -14,8 +14,13 @@ sealed interface ColumnDecoder
   /**
    * Check if the input value matches the condition at the given row.
    *
+   * <p>Missing-input semantics: a blank cell carries no condition and matches anything, but a
+   * non-blank condition can never be satisfied by an absent input. A {@code null} {@code
+   * inputValue} therefore fails every row that has a condition, including negative operators such
+   * as {@code NE} and {@code NOT_IN} — "unknown" is not evidence that a value differs.
+   *
    * @param rowIndex the row to check
-   * @param inputValue the value from DecisionInput (may be null)
+   * @param inputValue the value from DecisionInput, or null when the field is absent
    * @return true if matches, false otherwise
    */
   boolean matches(int rowIndex, Object inputValue);
@@ -27,11 +32,16 @@ sealed interface ColumnDecoder
    * TypeCoercion#toComparableInt} directly, skipping per-call coercion. The columnar bulk kernel
    * uses this to verify survivors from a batch of pre-coerced codes without re-coercing.
    *
+   * <p>{@code present} must be carried alongside the code because the coerced domain cannot express
+   * absence: an absent field and a present-but-unknown string both coerce to {@code NULL_ID}, yet
+   * only the latter may satisfy a condition.
+   *
    * @param rowIndex the row to check
-   * @param coercedValue the input value already coerced to its comparable int (0 = null/missing)
+   * @param coercedValue the input value already coerced to its comparable int
+   * @param present whether the input actually supplied a value for this column
    * @return true if matches, false otherwise
    */
-  boolean matchesCoerced(int rowIndex, int coercedValue);
+  boolean matchesCoerced(int rowIndex, int coercedValue, boolean present);
 
   /**
    * Check if this row has a condition (not blank).

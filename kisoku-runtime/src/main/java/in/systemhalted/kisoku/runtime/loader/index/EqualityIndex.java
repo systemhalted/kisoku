@@ -71,6 +71,11 @@ public final class EqualityIndex implements ColumnIndex {
   }
 
   @Override
+  public long[] candidatesForAbsentInput() {
+    return CandidateBitmap.copy(noConditionRows);
+  }
+
+  @Override
   public long memorySizeBytes() {
     int longCount = CandidateBitmap.longCount(rowCount);
     long bytesPerBitmap = longCount * 8L;

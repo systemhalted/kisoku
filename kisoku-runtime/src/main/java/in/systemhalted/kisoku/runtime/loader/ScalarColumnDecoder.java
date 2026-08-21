@@ -70,14 +70,20 @@ final class ScalarColumnDecoder implements ColumnDecoder {
     if (!hasCondition(rowIndex)) {
       return true; // Blank = no condition, always matches
     }
+    if (inputValue == null) {
+      return false; // Absent input cannot satisfy a condition
+    }
     return matchesCoerced(
-        rowIndex, TypeCoercion.toComparableInt(inputValue, column.type(), dictionary));
+        rowIndex, TypeCoercion.toComparableInt(inputValue, column.type(), dictionary), true);
   }
 
   @Override
-  public boolean matchesCoerced(int rowIndex, int inputInt) {
+  public boolean matchesCoerced(int rowIndex, int inputInt, boolean present) {
     if (!hasCondition(rowIndex)) {
       return true; // Blank = no condition, always matches
+    }
+    if (!present) {
+      return false; // Absent input cannot satisfy a condition
     }
 
     int storedValue = valueAt(rowIndex);

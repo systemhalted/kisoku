@@ -188,6 +188,11 @@ public final class ComparisonIndex implements ColumnIndex {
   }
 
   @Override
+  public long[] candidatesForAbsentInput() {
+    return blankRowBitmap.clone();
+  }
+
+  @Override
   public long memorySizeBytes() {
     // size of sortedValues
     long sizeOfSortedValues = sortedValues.length * 4L;
