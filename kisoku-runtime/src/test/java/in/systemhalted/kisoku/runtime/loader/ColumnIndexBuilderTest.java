@@ -26,8 +26,8 @@ import org.junit.jupiter.api.io.TempDir;
 class ColumnIndexBuilderTest {
 
   /**
-   * Table layout (priority descending matches written order, so artifact row indices are R1=0,
-   * R2=1, R3=2):
+   * Table layout. Priorities ascend with written order (1 outranks 2), so the artifact keeps source
+   * order and row indices are R1=0, R2=1, R3=2:
    *
    * <pre>
    * R1: AGE IN (18,25,30), REGION NOT IN (APAC)
@@ -40,9 +40,9 @@ class ColumnIndexBuilderTest {
     try (BufferedWriter writer = Files.newBufferedWriter(csv, StandardCharsets.UTF_8)) {
       writer.write("RULE_ID,PRIORITY,AGE,REGION,DISCOUNT\n");
       writer.write("RULE_ID,PRIORITY,IN,NOT IN,SET\n");
-      writer.write("R1,30,(18,25,30),(APAC),0.10\n");
+      writer.write("R1,10,(18,25,30),(APAC),0.10\n");
       writer.write("R2,20,(40,50),,0.20\n");
-      writer.write("R3,10,,(EMEA,LATAM),0.05\n");
+      writer.write("R3,30,,(EMEA,LATAM),0.05\n");
     }
 
     Schema schema =

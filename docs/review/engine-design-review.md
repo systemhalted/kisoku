@@ -4,9 +4,12 @@ Scope: full read of `kisoku-api` and `kisoku-runtime` at commit `dd9257f`, plus
 executable probes run against the built jars (compile → write → mmap load →
 evaluate). Every defect below was reproduced, not inferred.
 
-> **Status.** All four Tier 1 defects (§2.1–§2.4) have since been fixed on this
+> **Status.** All Tier 1 defects (§2.1–§2.6) have since been fixed on this
 > branch, each with a regression test; §7 marks them off and §8 records what the
-> fixes changed. The Tier 2 scale findings (§3) are unchanged and still open,
+> fixes changed. §2.1, §2.5 and §2.6 were revised after the first fix round:
+> §2.1's original write-up assumed a higher priority number meant a higher
+> priority, which is backwards, and §2.5/§2.6 surfaced while verifying the
+> corrected ordering. The Tier 2 scale findings (§3) are unchanged and still open,
 > with one partial improvement noted in §8. Sections 1–6 describe the code as
 > reviewed, so the reproductions stay readable against the commit they were run
 > against.
@@ -71,37 +74,50 @@ Worth stating plainly, because the defects below are all local:
 
 ## 2. Blocking correctness defects
 
-### 2.1 Priority ordering is inverted — the lowest-priority rule wins
+### 2.1 Priority selection is broken twice over
 
-`CsvRulesetCompiler.doCompile` physically reorders rows into priority order
-(`orderedRows`) **and** writes the source-index permutation into the rule-order
-section. `BinaryArtifactReader.readRuleOrder` reads that permutation back, and
-`LoadedRulesetImpl.evaluateIndexed`/`evaluateLinear` use it as physical row
-indices. The permutation is applied twice.
+`PRIORITY` counts up from the most important rule: 1 outranks 2, which outranks
+3. `docs/api.md` says so — "Lower numeric value = higher priority" — and the
+implementation contradicts it in two independent ways that partly mask each
+other.
 
-Reproduced — three rules, all matching, priorities 1 / 50 / 99:
+**Wrong direction.** `CsvRulesetCompiler.buildRuleOrder` sorts
+`.reversed()`, commented "Descending order (higher priority first)". That
+selects the *least* important matching rule.
+
+**Ordering applied twice.** `doCompile` physically reorders rows into priority
+order (`orderedRows`) **and** writes the source-index permutation into the
+rule-order section. `BinaryArtifactReader.readRuleOrder` reads that permutation
+back, and the evaluation paths use it as physical row indices — so the ordering
+is applied twice and evaluation order is scrambled whenever priority order
+differs from source order.
+
+Reproduced — four rules, all matching, in a file ordered 99 / 50 / 2 / 1:
 
 ```text
 RULE_ID,PRIORITY,REGION,DISCOUNT
 RULE_ID,PRIORITY,EQ,SET
-LOW,1,APAC,0.01
-MID,50,APAC,0.05
-HIGH,99,APAC,0.09
+P99,99,APAC,0.99
+P50,50,APAC,0.50
+P02,2,APAC,0.02
+P01,1,APAC,0.01
 ```
 
-`evaluate({REGION: APAC})` with `RuleSelectionPolicy.PRIORITY` returns **`LOW`**.
-Expected `HIGH`.
+`evaluate({REGION: APAC})` must return `P01`. It does not.
 
 The existing `selectsHighestPriorityRule` test passes only because its fixture's
-inputs make exactly one rule eligible, so ordering is never exercised.
+inputs leave one rule eligible on the path that matters, so neither defect is
+exercised.
 
-`FIRST_MATCH` is unaffected (the stored order is the identity permutation there),
-which is why this survived.
+`FIRST_MATCH` is unaffected by the permutation bug (the stored order is the
+identity permutation there), which is part of why this survived.
 
-Fix: apply the permutation once. Either write `0..n-1` into the rule-order
-section when rows are physically reordered, or stop reordering rows and keep the
-permutation as indirection. Both are consistent with `buildOutput(rowIndex)` and
-with the index bitmaps, which are built over physical positions.
+Fix: sort ascending, and apply the permutation once — write `0..n-1` into the
+rule-order section, since rows are already physically reordered. Both are
+consistent with `buildOutput(rowIndex)` and with the index bitmaps, which are
+built over physical positions. While there: a blank priority currently sorts as
+0, which under the correct direction would make an unnumbered rule outrank every
+numbered one; it should sort last.
 
 ### 2.2 Ordering comparisons on DECIMAL, STRING and TIMESTAMP are meaningless
 
@@ -172,6 +188,34 @@ variant."
 continues) — the public path just doesn't use it. Related: throwing a
 stack-filling exception per unmatched input is also the wrong cost model for a
 10K-variant batch.
+
+### 2.5 A zero-valued output decodes as "no value"
+
+`TypeCoercion.decodeValue` short-circuits on the null sentinel code before
+dispatching on type. Several types encode an ordinary value to that same code:
+decimal zero, `1970-01-01`, the epoch instant, `false`. Such a cell decodes to
+`null` even though its presence bit is set.
+
+Presence is already the presence bitmap's job — `ScalarColumnDecoder.getValue`
+checks `hasCondition(row)` before decoding — so the sentinel check inside
+`decodeValue` is both redundant and wrong. It should be removed.
+
+Under the format as reviewed this hits `DATE` (`1970-01-01`) and `BOOLEAN`
+partially; it widens to `DECIMAL` and `TIMESTAMP` once those are stored
+numerically (§7.2).
+
+### 2.6 A blank output cell throws
+
+`LoadedRulesetImpl.buildOutput` puts `decoder.getValue(rowIndex)` into the
+outputs map unconditionally, and `DecisionOutput` copies that map with
+`Map.copyOf`, which rejects null values. A blank output cell therefore fails
+evaluation with a `NullPointerException` from inside `Map.copyOf` — no message,
+no column name.
+
+Blank output cells are legal: the CSV rules require only that *at least one*
+output per row is non-blank, and `docs/api.md` already specifies the intended
+behaviour — "Output cell is blank → output key omitted from
+`DecisionOutput.outputs()`". The fix is to omit the key.
 
 ---
 
@@ -384,7 +428,8 @@ These matter because they are load-bearing for design decisions:
 
 **Tier 1 — correctness (the engine gives wrong answers without these)** — *done*
 
-1. ~~**Rule-order double permutation**~~ (§2.1). **Fixed.** One-line class of fix; write the
+1. ~~**Priority selection**~~ (§2.1). **Fixed** — sort ascending, store the
+   identity permutation, rank blank priorities last. One-line class of fix; write the
    identity permutation when rows are physically reordered. Add a test where the
    highest-priority rule appears last in the file *and* a lower-priority rule
    also matches.
@@ -399,7 +444,10 @@ These matter because they are load-bearing for design decisions:
    alongside the coerced code; a non-blank condition against an absent input must
    fail (make raise-vs-fail a `LoadOptions`/`CompileOptions` choice). Add a test
    matrix over every operator × {absent, unknown-value, present}.
-4. ~~**Per-variant bulk results**~~ (§2.4). **Fixed.** Return a no-match result per variant
+4. ~~**Per-variant bulk results**~~ (§2.4). **Fixed.**
+5. ~~**Zero-valued outputs and blank output cells**~~ (§2.5, §2.6). **Fixed** —
+   decoding no longer reads the null sentinel as absence, and a blank output
+   cell omits its key instead of throwing. Return a no-match result per variant
    rather than throwing out of the batch.
 
 **Tier 2 — scale (these decide whether the PRD numbers are reachable)**
@@ -462,7 +510,8 @@ jars.
 
 | Case | Before | After |
 |---|---|---|
-| Priority 1 / 50 / 99, all matching (§2.1) | `LOW` | `HIGH` |
+| Priorities 99/50/2/1 in that file order, all matching (§2.1) | `P99` | `P01` |
+| Blank priority vs priority 7 (§2.1) | blank wins | numbered wins |
 | `AMOUNT=1000.00` vs `AMOUNT GT 100.00` (§2.2) | no match | matches |
 | `BigDecimal("0.50")` vs `AMOUNT EQ 0.5` (§2.2) | no match | matches |
 | `NAME=ZZZ` vs `NAME GT MMM` (§2.2) | no match | matches |
@@ -471,6 +520,8 @@ jars.
 | `{}` vs `REGION NOT IN (APAC,EMEA)` (§2.3) | matches | no match |
 | `REGION=LATAM` vs `REGION NE APAC` (§2.3) | matches | matches (unchanged — correct) |
 | Bulk with one unmatched variant (§2.4) | whole batch throws | that variant empty, rest returned |
+| `DISCOUNT` output of `0.00` (§2.5) | decodes as `null` | decodes as `0.00` |
+| Blank output cell (§2.6) | `NullPointerException` | key omitted |
 
 **Artifact format 2.0.** Values are now a single 64-bit order-preserving code
 per cell instead of a 4-byte dictionary ID or narrowed int, dictionary entries

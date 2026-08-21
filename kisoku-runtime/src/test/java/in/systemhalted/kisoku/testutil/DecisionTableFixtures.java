@@ -61,7 +61,8 @@ public final class DecisionTableFixtures {
         List.of(
             List.of("R1", "10", "(18,29)", "(APAC)", "0.05", "SEG_A"),
             List.of("R2", "20", "(18,29)", "(EMEA)", "0.10", "SEG_B"),
-            List.of("R3", "5", "", "(APAC,EMEA)", "0.02", "SEG_C"));
+            // Catch-all: lowest priority, so the largest priority number.
+            List.of("R3", "99", "", "(APAC,EMEA)", "0.02", "SEG_C"));
     return writeCsv(dir, "priority.csv", header, operators, rows);
   }
 

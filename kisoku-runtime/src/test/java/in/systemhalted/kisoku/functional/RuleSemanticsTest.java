@@ -46,11 +46,39 @@ class RuleSemanticsTest {
   // ---------------------------------------------------------------- priority
 
   /**
-   * The highest-priority matching rule must win regardless of where it sits in the source file.
+   * A lower PRIORITY value means a higher priority: 1 outranks 2, which outranks 3.
+   *
+   * <p>Regression: the compiler sorted descending, so the least important matching rule won.
+   */
+  @Test
+  void lowestPriorityValueWinsAmongMatchingRules(@TempDir Path dir) throws IOException {
+    Path csv =
+        writeCsv(
+            dir,
+            "priority-direction.csv",
+            "RULE_ID,PRIORITY,REGION,DISCOUNT",
+            "RULE_ID,PRIORITY,EQ,SET",
+            "TOP,1,APAC,0.01",
+            "MIDDLE,50,APAC,0.05",
+            "BOTTOM,99,APAC,0.09");
+    Schema schema = priorityTableSchema();
+
+    for (boolean indexed : new boolean[] {true, false}) {
+      try (LoadedRuleset ruleset = load(csv, schema, RuleSelectionPolicy.PRIORITY, indexed)) {
+        DecisionOutput output = ruleset.evaluate(DecisionInput.of(Map.of("REGION", "APAC")));
+        assertEquals("TOP", output.ruleId(), "indexed=" + indexed);
+        assertEquals(
+            new BigDecimal("0.01"), output.outputs().get("DISCOUNT"), "indexed=" + indexed);
+      }
+    }
+  }
+
+  /**
+   * The winning rule must be selected by its priority, not by where it sits in the file.
    *
    * <p>Regression: the compiler physically reordered rows into priority order and also stored the
    * source-row permutation, which the loader re-applied as physical row indices. The ordering was
-   * therefore applied twice and the <em>lowest</em>-priority matching rule won.
+   * therefore applied twice, scrambling evaluation order whenever it differed from source order.
    */
   @Test
   void highestPriorityRuleWinsWhenItAppearsLastInTheFile(@TempDir Path dir) throws IOException {
@@ -60,21 +88,40 @@ class RuleSemanticsTest {
             "priority-last.csv",
             "RULE_ID,PRIORITY,REGION,DISCOUNT",
             "RULE_ID,PRIORITY,EQ,SET",
-            "LOW,1,APAC,0.01",
-            "MID,50,APAC,0.05",
-            "HIGH,99,APAC,0.09");
-    Schema schema =
-        Schema.builder()
-            .column("REGION", ColumnType.STRING)
-            .column("DISCOUNT", ColumnType.DECIMAL)
-            .build();
+            "BOTTOM,99,APAC,0.09",
+            "MIDDLE,50,APAC,0.05",
+            "TOP,1,APAC,0.01");
+    Schema schema = priorityTableSchema();
 
     for (boolean indexed : new boolean[] {true, false}) {
       try (LoadedRuleset ruleset = load(csv, schema, RuleSelectionPolicy.PRIORITY, indexed)) {
         DecisionOutput output = ruleset.evaluate(DecisionInput.of(Map.of("REGION", "APAC")));
-        assertEquals("HIGH", output.ruleId(), "indexed=" + indexed);
+        assertEquals("TOP", output.ruleId(), "indexed=" + indexed);
         assertEquals(
-            new BigDecimal("0.09"), output.outputs().get("DISCOUNT"), "indexed=" + indexed);
+            new BigDecimal("0.01"), output.outputs().get("DISCOUNT"), "indexed=" + indexed);
+      }
+    }
+  }
+
+  /** A blank priority ranks last, so an unnumbered rule cannot pre-empt a numbered one. */
+  @Test
+  void blankPriorityRanksLast(@TempDir Path dir) throws IOException {
+    Path csv =
+        writeCsv(
+            dir,
+            "priority-blank.csv",
+            "RULE_ID,PRIORITY,REGION,DISCOUNT",
+            "RULE_ID,PRIORITY,EQ,SET",
+            "UNNUMBERED,,APAC,0.01",
+            "NUMBERED,7,APAC,0.09");
+    Schema schema = priorityTableSchema();
+
+    for (boolean indexed : new boolean[] {true, false}) {
+      try (LoadedRuleset ruleset = load(csv, schema, RuleSelectionPolicy.PRIORITY, indexed)) {
+        assertEquals(
+            "NUMBERED",
+            ruleset.evaluate(DecisionInput.of(Map.of("REGION", "APAC"))).ruleId(),
+            "indexed=" + indexed);
       }
     }
   }
@@ -90,11 +137,7 @@ class RuleSemanticsTest {
             "RULE_ID,PRIORITY,EQ,SET",
             "FIRST,10,APAC,0.01",
             "SECOND,10,APAC,0.02");
-    Schema schema =
-        Schema.builder()
-            .column("REGION", ColumnType.STRING)
-            .column("DISCOUNT", ColumnType.DECIMAL)
-            .build();
+    Schema schema = priorityTableSchema();
 
     for (boolean indexed : new boolean[] {true, false}) {
       try (LoadedRuleset ruleset = load(csv, schema, RuleSelectionPolicy.AUTO, indexed)) {
@@ -334,6 +377,13 @@ class RuleSemanticsTest {
   }
 
   // ----------------------------------------------------------------- helpers
+
+  private static Schema priorityTableSchema() {
+    return Schema.builder()
+        .column("REGION", ColumnType.STRING)
+        .column("DISCOUNT", ColumnType.DECIMAL)
+        .build();
+  }
 
   private LoadedRuleset load(
       Path csv, Schema schema, RuleSelectionPolicy policy, boolean prewarmIndexes) {

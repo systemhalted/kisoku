@@ -217,8 +217,9 @@ For deterministic evaluation, rules are stored in priority or insertion order:
 - `order_type`: 0 = insertion order, 1 = priority order
 - `rule_indices`: Row indices in evaluation order
 
-If `rule_selection = PRIORITY`, rules are pre-sorted by priority value (descending), ties
-broken by source order. If `rule_selection = FIRST_MATCH`, rules are in original CSV row order.
+If `rule_selection = PRIORITY`, rules are pre-sorted by priority value **ascending** — a lower
+value means a higher priority, so `PRIORITY` 1 is evaluated before 2 — with ties broken by
+source order and unnumbered rows sorted last. If `rule_selection = FIRST_MATCH`, rules are in original CSV row order.
 
 Rows are written to the rule data section **already in evaluation order**, so `rule_indices`
 is the identity permutation over physical rows. It must not hold the source-row permutation:

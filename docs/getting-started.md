@@ -47,9 +47,9 @@ A Kisoku CSV uses **two header rows**, then one row per rule:
 ```text
 RULE_ID,PRIORITY,REGION,AGE,DISCOUNT
 RULE_ID,PRIORITY,IN,BETWEEN,SET
-R1,30,(APAC,EMEA),(18,65),0.20
+R1,10,(APAC,EMEA),(18,65),0.20
 R2,20,(US),(21,70),0.15
-R3,10,,,0.05
+R3,99,,,0.05
 ```
 
 Column conventions:
@@ -68,7 +68,9 @@ Cell encoding:
 - A **blank cell means "no condition"** — that rule matches any input for that column.
 
 In the table above, `R3` has blank `REGION`/`AGE`, so it matches everything — a
-catch-all fallback with the lowest priority.
+catch-all fallback with the lowest priority. Priority counts *up* from the most
+important rule: `PRIORITY` 1 outranks 2, so the catch-all carries the largest
+number.
 
 ## 3. Define the schema
 

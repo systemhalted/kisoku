@@ -47,7 +47,7 @@ under 1 GB with bounded per-evaluation working set.
 - Parse operator values in cells: `BETWEEN_*`/`NOT_BETWEEN_*` use `(min,max)`,
   `IN`/`NOT_IN` use `(A,B,C)`, and blank cells mean no condition.
 - Normalize operator aliases (e.g., `>=` -> `GTE`, `BETWEEN` -> `BETWEEN_INCLUSIVE`) during compilation.
-- `PRIORITY` values are required when the column exists.
+- `PRIORITY` values are required when the column exists; a blank ranks the row last.
 - Output (`SET`) cells may be blank, but at least one output must be non-blank per row.
 - Compile against the client-provided schema (inputs and outputs).
 - Enforce type-specific constraints per `ColumnType` (STRING, INTEGER, DECIMAL,
@@ -102,9 +102,10 @@ Indexed candidate filtering is implemented (not a linear scan). Coverage:
 - **Candidate selection**: start from "all rows," fetch each indexed input
   column's candidate bitmap, intersect (`AND`) into the running set, then verify
   survivors in deterministic rule order.
-- **Deterministic rule selection**: fixed row order, or `PRIORITY` descending with ties
-  broken by source order. Rows are written to the artifact already in evaluation order, so
-  the rule-order section stores the identity permutation over physical rows.
+- **Deterministic rule selection**: fixed row order, or `PRIORITY` ascending — a lower value
+  means a higher priority, so 1 outranks 2 — with ties broken by source order and unnumbered
+  rows last. Rows are written to the artifact already in evaluation order, so the rule-order
+  section stores the identity permutation over physical rows.
 
 Range operators (`BETWEEN_*`) are not yet indexed and fall back to verification.
 

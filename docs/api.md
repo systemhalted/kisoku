@@ -308,7 +308,7 @@ DecisionInput.of(Map.of("AGE", 25))  // No REGION key = matches blank REGION cel
 | `PRIORITY` | Selects row with lowest priority value among matches |
 | `FIRST_MATCH` | Selects first matching row in CSV order (ignores PRIORITY) |
 
-**Priority ordering**: Lower numeric value = higher priority. If multiple rows have the same priority, first-match among them wins.
+**Priority ordering**: Lower numeric value = higher priority — `PRIORITY` 1 outranks 2, which outranks 3. If multiple rows have the same priority, first-match among them wins. A row with a blank priority ranks last, so it can never pre-empt a numbered rule.
 
 ## TEST_* Column Behavior
 
