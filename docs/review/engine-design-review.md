@@ -4,6 +4,13 @@ Scope: full read of `kisoku-api` and `kisoku-runtime` at commit `dd9257f`, plus
 executable probes run against the built jars (compile → write → mmap load →
 evaluate). Every defect below was reproduced, not inferred.
 
+> **Status.** All four Tier 1 defects (§2.1–§2.4) have since been fixed on this
+> branch, each with a regression test; §7 marks them off and §8 records what the
+> fixes changed. The Tier 2 scale findings (§3) are unchanged and still open,
+> with one partial improvement noted in §8. Sections 1–6 describe the code as
+> reviewed, so the reproductions stay readable against the commit they were run
+> against.
+
 ---
 
 ## Verdict
@@ -375,24 +382,24 @@ These matter because they are load-bearing for design decisions:
 
 ## 7. Recommended fix order
 
-**Tier 1 — correctness (the engine gives wrong answers without these)**
+**Tier 1 — correctness (the engine gives wrong answers without these)** — *done*
 
-1. **Rule-order double permutation** (§2.1). One-line class of fix; write the
+1. ~~**Rule-order double permutation**~~ (§2.1). **Fixed.** One-line class of fix; write the
    identity permutation when rows are physically reordered. Add a test where the
    highest-priority rule appears last in the file *and* a lower-priority rule
    also matches.
-2. **Order-preserving value encoding** (§2.2). Assign dictionary IDs in **sorted
+2. ~~**Order-preserving value encoding**~~ (§2.2). **Fixed.** Assign dictionary IDs in **sorted
    value order** so `STRING` comparisons are lexicographic; for `DECIMAL` store a
    scaled integer (fixed scale per column, from the schema) and for `TIMESTAMP`
    store epoch millis. Widen value slots to 8 bytes, or add a per-column codec so
    only wide columns pay. For an input value not present in the dictionary, an
    ordering predicate needs the *insertion rank* (binary search over the sorted
    values), not `NULL_ID`.
-3. **Explicit missing/unknown semantics** (§2.3). Thread a `present` flag
+3. ~~**Explicit missing/unknown semantics**~~ (§2.3). **Fixed.** Thread a `present` flag
    alongside the coerced code; a non-blank condition against an absent input must
    fail (make raise-vs-fail a `LoadOptions`/`CompileOptions` choice). Add a test
    matrix over every operator × {absent, unknown-value, present}.
-4. **Per-variant bulk results** (§2.4). Return a no-match result per variant
+4. ~~**Per-variant bulk results**~~ (§2.4). **Fixed.** Return a no-match result per variant
    rather than throwing out of the batch.
 
 **Tier 2 — scale (these decide whether the PRD numbers are reachable)**
@@ -442,3 +449,53 @@ Memory figures use `Runtime.totalMemory() - freeMemory()` after three
 GC+settle cycles; per-evaluation allocation uses
 `com.sun.management.ThreadMXBean.getThreadAllocatedBytes`, measured over 200
 evaluations after a 50-evaluation warmup.
+
+
+---
+
+## 8. What the Tier 1 fixes changed
+
+Recorded here so the measurements above stay comparable. Same probes, rebuilt
+jars.
+
+**Behaviour.** Every reproduction in §2 now gives the right answer:
+
+| Case | Before | After |
+|---|---|---|
+| Priority 1 / 50 / 99, all matching (§2.1) | `LOW` | `HIGH` |
+| `AMOUNT=1000.00` vs `AMOUNT GT 100.00` (§2.2) | no match | matches |
+| `BigDecimal("0.50")` vs `AMOUNT EQ 0.5` (§2.2) | no match | matches |
+| `NAME=ZZZ` vs `NAME GT MMM` (§2.2) | no match | matches |
+| `4294967297L` vs `ACCOUNT EQ 1` (§2.2) | matches (truncated) | no match |
+| `{}` vs `COUNT EQ 0 AND ACTIVE EQ FALSE` (§2.3) | matches | no match |
+| `{}` vs `REGION NOT IN (APAC,EMEA)` (§2.3) | matches | no match |
+| `REGION=LATAM` vs `REGION NE APAC` (§2.3) | matches | matches (unchanged — correct) |
+| Bulk with one unmatched variant (§2.4) | whole batch throws | that variant empty, rest returned |
+
+**Artifact format 2.0.** Values are now a single 64-bit order-preserving code
+per cell instead of a 4-byte dictionary ID or narrowed int, dictionary entries
+are written sorted, and column definitions carry a decimal scale (12 → 16
+bytes). 1.x artifacts must be recompiled. Two knock-on effects on §3:
+
+- **Artifacts are ~1.8× larger** (12.6 MB → 22.5 MB for the 200K-row probe),
+  which brings the 2 GB ceiling of §3.6 closer. The typical workload lands
+  around 3 GB rather than 1.6 GB, so §3.6 moves from "under the ceiling, barely"
+  to **blocking**, and the 64-bit-offset work is now required rather than
+  merely advisable.
+- **Dictionary heap roughly halved** — 24.1 MB → 10.8 MB at 200K rows, ~120 to
+  ~54 bytes/row. Sorted IDs let the loader resolve strings by binary search over
+  the entries it already holds, so the reverse `HashMap<String,Integer>` is
+  gone, and `DECIMAL`/`TIMESTAMP` values no longer enter the dictionary at all.
+  That takes §3.1's 5M-row projection from ~600 MB to ~270 MB. Still too much,
+  and still linear in rows because `RULE_ID` is unique per row — fix 6 stands.
+
+Index heap (§3.2), per-evaluation allocation (§3.3) and the O(rows) candidate
+scan (§3.4) are untouched by these fixes and remain the blocking scale issues.
+
+**API.** `DECIMAL` outputs now decode as `BigDecimal` at the column's scale
+rather than as a `String`, and `INTEGER` outputs as `Long`. `BulkResult` gained
+`result(int)`, `matched(int)`, `size()`, `matchedCount()` and
+`unmatchedIndices()`; its `results()` list keeps one entry per variant and holds
+`null` where nothing matched. `DATE` inputs must be a `LocalDate` — the old
+"bare `Integer` means epoch day" path is gone, since it silently read a year as
+a day number.

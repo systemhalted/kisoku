@@ -30,7 +30,7 @@ class EqualityIndexTest {
   @Test
   void buildCreatesIndexFromColumnData() {
     int rowCount = 10;
-    int[] values = {100, 200, 100, 300, 200, 100, 0, 0, 400, 100};
+    long[] values = {100, 200, 100, 300, 200, 100, 0, 0, 400, 100};
     // Rows 0-5 and 8-9 have conditions, rows 6-7 are blank
     byte[] presence = createPresenceBitmap(rowCount, 0, 1, 2, 3, 4, 5, 8, 9);
 
@@ -45,7 +45,7 @@ class EqualityIndexTest {
     int rowCount = 10;
     // Values: rows 0,2,5,9 = 100; rows 1,4 = 200; row 3 = 300; row 8 = 400
     // Rows 6,7 are blank (no condition)
-    int[] values = {100, 200, 100, 300, 200, 100, 0, 0, 400, 100};
+    long[] values = {100, 200, 100, 300, 200, 100, 0, 0, 400, 100};
     byte[] presence = createPresenceBitmap(rowCount, 0, 1, 2, 3, 4, 5, 8, 9);
 
     EqualityIndex index = EqualityIndex.build(values, presence, rowCount);
@@ -75,7 +75,7 @@ class EqualityIndexTest {
   @Test
   void getCandidatesReturnsOnlyBlanksForUnknownValue() {
     int rowCount = 10;
-    int[] values = {100, 200, 100, 300, 200, 100, 0, 0, 400, 100};
+    long[] values = {100, 200, 100, 300, 200, 100, 0, 0, 400, 100};
     byte[] presence = createPresenceBitmap(rowCount, 0, 1, 2, 3, 4, 5, 8, 9);
 
     EqualityIndex index = EqualityIndex.build(values, presence, rowCount);
@@ -90,7 +90,7 @@ class EqualityIndexTest {
   @Test
   void handleAllRowsWithConditions() {
     int rowCount = 5;
-    int[] values = {10, 20, 30, 10, 20};
+    long[] values = {10, 20, 30, 10, 20};
     byte[] presence = createPresenceBitmap(rowCount, 0, 1, 2, 3, 4); // All have conditions
 
     EqualityIndex index = EqualityIndex.build(values, presence, rowCount);
@@ -109,7 +109,7 @@ class EqualityIndexTest {
   @Test
   void handleAllRowsBlank() {
     int rowCount = 5;
-    int[] values = {0, 0, 0, 0, 0}; // Values don't matter when all blank
+    long[] values = {0, 0, 0, 0, 0}; // Values don't matter when all blank
     byte[] presence = new byte[(rowCount + 7) / 8]; // All zeros = all blank
 
     EqualityIndex index = EqualityIndex.build(values, presence, rowCount);
@@ -124,7 +124,7 @@ class EqualityIndexTest {
   @Test
   void memorySizeBytesReturnsReasonableEstimate() {
     int rowCount = 1000;
-    int[] values = new int[rowCount];
+    long[] values = new long[rowCount];
     for (int i = 0; i < rowCount; i++) {
       values[i] = i % 10; // 10 unique values
     }
@@ -145,7 +145,7 @@ class EqualityIndexTest {
   @Test
   void handlesSingleRow() {
     int rowCount = 1;
-    int[] values = {42};
+    long[] values = {42};
     byte[] presence = createPresenceBitmap(rowCount, 0);
 
     EqualityIndex index = EqualityIndex.build(values, presence, rowCount);
@@ -161,7 +161,7 @@ class EqualityIndexTest {
   @Test
   void handlesLargeRowCountWithManyUniqueValues() {
     int rowCount = 10000;
-    int[] values = new int[rowCount];
+    long[] values = new long[rowCount];
     byte[] presence = new byte[(rowCount + 7) / 8];
     java.util.Arrays.fill(presence, (byte) 0xFF);
 

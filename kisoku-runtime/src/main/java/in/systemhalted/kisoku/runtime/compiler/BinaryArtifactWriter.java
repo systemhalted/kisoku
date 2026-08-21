@@ -24,16 +24,20 @@ final class BinaryArtifactWriter {
   /** Magic bytes: "KISS" (0x4B495353) */
   static final int MAGIC = 0x4B495353;
 
-  static final short VERSION_MAJOR = 1;
-
   /**
-   * Minor version 1 populates real per-column {@code data_offset} values in column definitions (1.0
-   * wrote 0 for every column). Backward compatible: 1.0 readers re-derive offsets by decoding
-   * columns sequentially and never read the field.
+   * Major version 2 stores every value as an order-preserving 64-bit code rather than a 4-byte
+   * dictionary ID or narrowed int, so ordering operators are meaningful on STRING, DECIMAL and
+   * TIMESTAMP columns. Column definitions carry a decimal scale and grew from 12 to 16 bytes, and
+   * dictionary entries are written in sorted order. The layout is not readable by 1.x.
    */
-  static final short VERSION_MINOR = 1;
+  static final short VERSION_MAJOR = 2;
+
+  static final short VERSION_MINOR = 0;
 
   private static final int HEADER_SIZE = 32;
+
+  /** Serialized size of one column definition. */
+  static final int COLUMN_DEFINITION_SIZE = 16;
 
   /**
    * Writes the complete binary artifact.
@@ -108,7 +112,8 @@ final class BinaryArtifactWriter {
    * @param roleOrdinal column role (0=INPUT, 1=OUTPUT, 2=METADATA)
    * @param flags bit flags (0x01=nullable, 0x02=test-only)
    * @param dataOffset byte offset within rule data section
-   * @return serialized column definition (12 bytes)
+   * @param scale decimal scale for DECIMAL columns, 0 otherwise
+   * @return serialized column definition (16 bytes)
    */
   static byte[] writeColumnDefinition(
       int nameId,
@@ -116,9 +121,10 @@ final class BinaryArtifactWriter {
       int typeOrdinal,
       int roleOrdinal,
       int flags,
-      int dataOffset) {
+      int dataOffset,
+      int scale) {
     try {
-      ByteArrayOutputStream baos = new ByteArrayOutputStream(12);
+      ByteArrayOutputStream baos = new ByteArrayOutputStream(COLUMN_DEFINITION_SIZE);
       DataOutputStream dos = new DataOutputStream(baos);
 
       dos.writeInt(nameId); // 0-3: name_id
@@ -127,6 +133,7 @@ final class BinaryArtifactWriter {
       dos.writeByte(roleOrdinal); // 6: column_role
       dos.writeByte(flags); // 7: flags
       dos.writeInt(dataOffset); // 8-11: data_offset
+      dos.writeInt(scale); // 12-15: decimal scale
 
       dos.flush();
       return baos.toByteArray();

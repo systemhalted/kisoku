@@ -3,8 +3,8 @@ package in.systemhalted.kisoku.runtime.loader;
 /**
  * A columnar batch of inputs for the bulk evaluation kernel.
  *
- * <p>Inputs are stored column-major as pre-coerced comparable ints (the same domain produced by
- * {@link TypeCoercion#toComparableInt}), so the kernel never re-coerces per cell. {@code codes} is
+ * <p>Inputs are stored column-major as pre-coerced comparable codes (the same domain produced by
+ * {@link TypeCoercion#toComparableCode}), so the kernel never re-coerces per cell. {@code codes} is
  * indexed {@code [inputSlot][row]}, where {@code inputSlot} aligns with the ruleset's input-column
  * order (see {@code ColumnarBulkKernel}).
  *
@@ -13,11 +13,11 @@ package in.systemhalted.kisoku.runtime.loader;
  * coerce to {@code NULL_ID}, but only the latter may satisfy a condition.
  */
 final class InputBatch {
-  private final int[][] codes; // [inputSlot][row]
+  private final long[][] codes; // [inputSlot][row]
   private final boolean[][] present; // [inputSlot][row]
   private final int rowCount;
 
-  InputBatch(int[][] codes, boolean[][] present, int rowCount) {
+  InputBatch(long[][] codes, boolean[][] present, int rowCount) {
     this.codes = codes;
     this.present = present;
     this.rowCount = rowCount;
@@ -28,7 +28,7 @@ final class InputBatch {
   }
 
   /** Coerced code for the given input slot and row. */
-  int code(int inputSlot, int row) {
+  long code(int inputSlot, int row) {
     return codes[inputSlot][row];
   }
 

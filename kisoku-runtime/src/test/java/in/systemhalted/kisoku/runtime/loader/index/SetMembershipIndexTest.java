@@ -36,7 +36,7 @@ class SetMembershipIndexTest {
   // Row 4: blank (no condition)
   private static final int[] LIST_OFFSETS = {0, 3, 0, 5, 0};
   private static final short[] LIST_LENGTHS = {3, 2, 0, 1, 0};
-  private static final int[] ALL_VALUES = {10, 20, 30, 20, 40, 30};
+  private static final long[] ALL_VALUES = {10, 20, 30, 20, 40, 30};
   private static final int ROW_COUNT = 5;
 
   private SetMembershipIndex buildIndex(Operator operator) {

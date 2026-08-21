@@ -148,16 +148,16 @@ final class ColumnarBulkKernel {
   InputBatch encode(List<DecisionInput> inputs) {
     int rows = inputs.size();
     int slots = inputColumnIndices.length;
-    int[][] codes = new int[slots][rows];
+    long[][] codes = new long[slots][rows];
     boolean[][] present = new boolean[slots][rows];
     for (int k = 0; k < slots; k++) {
       ColumnDefinition col = columns.get(inputColumnIndices[k]);
-      int[] column = codes[k];
+      long[] column = codes[k];
       boolean[] supplied = present[k];
       for (int row = 0; row < rows; row++) {
         Object value = inputs.get(row).get(col.name()).orElse(null);
         supplied[row] = value != null;
-        column[row] = TypeCoercion.toComparableInt(value, col.type(), dictionary);
+        column[row] = TypeCoercion.toComparableCode(value, col.type(), col.scale(), dictionary);
       }
     }
     return new InputBatch(codes, present, rows);

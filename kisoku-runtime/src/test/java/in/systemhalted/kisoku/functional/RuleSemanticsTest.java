@@ -21,6 +21,7 @@ import in.systemhalted.kisoku.api.loading.LoadOptions;
 import in.systemhalted.kisoku.api.loading.LoadedRuleset;
 import in.systemhalted.kisoku.api.loading.RulesetLoader;
 import java.io.IOException;
+import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -72,7 +73,8 @@ class RuleSemanticsTest {
       try (LoadedRuleset ruleset = load(csv, schema, RuleSelectionPolicy.PRIORITY, indexed)) {
         DecisionOutput output = ruleset.evaluate(DecisionInput.of(Map.of("REGION", "APAC")));
         assertEquals("HIGH", output.ruleId(), "indexed=" + indexed);
-        assertEquals("0.09", output.outputs().get("DISCOUNT"), "indexed=" + indexed);
+        assertEquals(
+            new BigDecimal("0.09"), output.outputs().get("DISCOUNT"), "indexed=" + indexed);
       }
     }
   }

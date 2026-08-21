@@ -30,7 +30,7 @@ import java.util.List;
  *   data_offset: 4 bytes
  *
  * String Dictionary
- * Column Definitions (12 bytes each)
+ * Column Definitions (16 bytes each)
  * Rule Data (columnar)
  * Rule Order Index
  * </pre>
@@ -39,16 +39,19 @@ final class BinaryArtifactReader {
   /** Magic bytes: "KISS" (0x4B495353) */
   static final int MAGIC = 0x4B495353;
 
-  static final short VERSION_MAJOR = 1;
+  static final short VERSION_MAJOR = 2;
 
   /**
    * Highest minor version this reader understands. The reader accepts any minor version with a
-   * matching major (it only rejects on major mismatch), so 1.0 and 1.1 artifacts both load.
+   * matching major (it only rejects on major mismatch).
    */
-  static final short VERSION_MINOR = 1;
+  static final short VERSION_MINOR = 0;
 
   static final int HEADER_SIZE = 32;
-  static final int COLUMN_DEF_SIZE = 12;
+  static final int COLUMN_DEF_SIZE = 16;
+
+  /** Bytes per stored value: every column type encodes to a 64-bit order-preserving code. */
+  static final int VALUE_SIZE = 8;
 
   private final ByteBuffer buffer;
   private final ArtifactKind artifactKind;
@@ -183,7 +186,7 @@ final class BinaryArtifactReader {
     int bitmapSize = BitMapUtils.bitmapSize(rowCount);
     return switch (column.operator()) {
       case BETWEEN_INCLUSIVE, BETWEEN_EXCLUSIVE, NOT_BETWEEN_INCLUSIVE, NOT_BETWEEN_EXCLUSIVE ->
-          bitmapSize + rowCount * 4 * 2;
+          bitmapSize + rowCount * VALUE_SIZE * 2;
       case IN, NOT_IN -> {
         int offsetsBase = base + bitmapSize;
         int lengthsBase = offsetsBase + rowCount * 4;
@@ -195,9 +198,9 @@ final class BinaryArtifactReader {
             totalValues = end;
           }
         }
-        yield bitmapSize + rowCount * 4 + rowCount * 2 + totalValues * 4;
+        yield bitmapSize + rowCount * 4 + rowCount * 2 + totalValues * VALUE_SIZE;
       }
-      default -> bitmapSize + rowCount * 4;
+      default -> bitmapSize + rowCount * VALUE_SIZE;
     };
   }
 
@@ -213,6 +216,7 @@ final class BinaryArtifactReader {
       int roleOrdinal = buffer.get() & 0xFF;
       int flags = buffer.get() & 0xFF;
       int columnDataOffset = buffer.getInt();
+      int scale = buffer.getInt();
 
       String name = dictionary.get(nameId);
       Operator operator = Operator.values()[operatorOrdinal];
@@ -220,7 +224,7 @@ final class BinaryArtifactReader {
       ColumnRole role = ColumnRole.fromOrdinal(roleOrdinal);
 
       columns.add(
-          new ColumnDefinition(nameId, name, operator, type, role, flags, columnDataOffset));
+          new ColumnDefinition(nameId, name, operator, type, role, flags, columnDataOffset, scale));
     }
 
     return List.copyOf(columns);

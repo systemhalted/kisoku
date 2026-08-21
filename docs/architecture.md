@@ -102,7 +102,9 @@ Indexed candidate filtering is implemented (not a linear scan). Coverage:
 - **Candidate selection**: start from "all rows," fetch each indexed input
   column's candidate bitmap, intersect (`AND`) into the running set, then verify
   survivors in deterministic rule order.
-- **Deterministic rule selection**: fixed row order or explicit `PRIORITY`.
+- **Deterministic rule selection**: fixed row order, or `PRIORITY` descending with ties
+  broken by source order. Rows are written to the artifact already in evaluation order, so
+  the rule-order section stores the identity permutation over physical rows.
 
 Range operators (`BETWEEN_*`) are not yet indexed and fall back to verification.
 
@@ -116,8 +118,9 @@ Range operators (`BETWEEN_*`) are not yet indexed and fall back to verification.
 - Apply base input, then overlay variant inputs per evaluation.
 - Narrow candidates via index bitmap intersection, then verify candidate rows in
   deterministic order (priority or first-match).
-- Type coercion via `TypeCoercion` handles input value conversions; decoders also
-  support a coerced-int match path read directly from the buffer.
+- Type coercion via `TypeCoercion` maps inputs into the order-preserving code domain;
+  decoders also support a pre-coerced match path read directly from the buffer, carrying an
+  explicit presence flag so an absent field is never mistaken for a supplied value.
 - Return `DecisionOutput` with `ruleId()` and `outputs()` (plus optional
   diagnostics).
 

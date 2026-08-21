@@ -14,12 +14,11 @@ import java.util.Map;
  * structure).
  */
 public final class EqualityIndex implements ColumnIndex {
-  private final Map<Integer, long[]> valueToRowBitmap;
+  private final Map<Long, long[]> valueToRowBitmap;
   private final long[] noConditionRows;
   private final int rowCount;
 
-  private EqualityIndex(
-      Map<Integer, long[]> valueToRowBitmap, long[] noConditionRows, int rowCount) {
+  private EqualityIndex(Map<Long, long[]> valueToRowBitmap, long[] noConditionRows, int rowCount) {
     this.valueToRowBitmap = Map.copyOf(valueToRowBitmap);
     this.noConditionRows = noConditionRows;
     this.rowCount = rowCount;
@@ -28,24 +27,24 @@ public final class EqualityIndex implements ColumnIndex {
   /**
    * Build an equality index from column data.
    *
-   * @param values the column values (one per row)
+   * @param values the column codes (one per row)
    * @param presenceBitmap the presence bitmap (MSB-first, byte array)
    * @param rowCount total number of rows
    * @return the built index
    */
-  public static EqualityIndex build(int[] values, byte[] presenceBitmap, int rowCount) {
+  public static EqualityIndex build(long[] values, byte[] presenceBitmap, int rowCount) {
     int longCount = CandidateBitmap.longCount(rowCount);
 
     // Track rows with no condition (blank cells)
     long[] noConditionRows = new long[longCount];
 
     // Group rows by value
-    Map<Integer, long[]> valueToRows = new HashMap<>();
+    Map<Long, long[]> valueToRows = new HashMap<>();
 
     for (int row = 0; row < rowCount; row++) {
       if (isPresent(presenceBitmap, row)) {
         // Row has a condition - add to value's bitmap
-        int value = values[row];
+        long value = values[row];
         long[] bitmap = valueToRows.computeIfAbsent(value, k -> new long[longCount]);
         CandidateBitmap.set(bitmap, row);
       } else {
@@ -58,7 +57,7 @@ public final class EqualityIndex implements ColumnIndex {
   }
 
   @Override
-  public long[] getCandidates(int inputValue) {
+  public long[] getCandidates(long inputValue) {
     long[] exactMatch = valueToRowBitmap.get(inputValue);
 
     if (exactMatch == null) {
