@@ -213,8 +213,9 @@ public final class CsvRulesetCompiler implements RulesetCompiler {
         }
 
         // Only STRING values are dictionary-encoded. DECIMAL and TIMESTAMP are stored as
-        // order-preserving numbers, so they neither enter the dictionary nor inflate it.
-        if (col.type != ColumnType.STRING) {
+        // order-preserving numbers, and RULE_ID as inline UTF-8 - RULE_ID is unique per row, so
+        // dictionary-encoding it would make the dictionary linear in the row count.
+        if (col.type != ColumnType.STRING || col.operator == Operator.RULE_ID) {
           continue;
         }
 
@@ -436,6 +437,7 @@ public final class CsvRulesetCompiler implements RulesetCompiler {
   private ColumnEncoder createEncoder(
       Operator operator, StringDictionary dictionary, ColumnType type, int scale) {
     return switch (operator) {
+      case RULE_ID -> new InlineStringColumnEncoder(dictionary, type);
       case IN, NOT_IN -> new SetColumnEncoder(dictionary, type, scale);
       case BETWEEN_INCLUSIVE, BETWEEN_EXCLUSIVE, NOT_BETWEEN_INCLUSIVE, NOT_BETWEEN_EXCLUSIVE ->
           new RangeColumnEncoder(dictionary, type, scale);

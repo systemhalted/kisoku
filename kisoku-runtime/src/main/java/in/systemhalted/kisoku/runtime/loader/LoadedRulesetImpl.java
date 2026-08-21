@@ -24,7 +24,8 @@ final class LoadedRulesetImpl implements LoadedRuleset {
   private final RulesetMetadata metadata;
   private final List<ColumnDefinition> columns;
   private final List<ColumnDecoder> decoders;
-  private final int[] ruleOrder;
+  private final int[] ruleOrder; // null = identity permutation (the compiler's normal output)
+  private final int rowCount;
   private final ByteBuffer directBuffer; // For cleanup if memory-mapped
   private final AutoCloseable resource; // Backing file channel for mapped loads, or null
 
@@ -43,10 +44,20 @@ final class LoadedRulesetImpl implements LoadedRuleset {
       List<ColumnDefinition> columns,
       List<ColumnDecoder> decoders,
       int[] ruleOrder,
+      int rowCount,
       ByteBuffer directBuffer,
       List<PostingListIndex> columnIndexes,
       StringDictionaryReader dictionary) {
-    this(metadata, columns, decoders, ruleOrder, directBuffer, null, columnIndexes, dictionary);
+    this(
+        metadata,
+        columns,
+        decoders,
+        ruleOrder,
+        rowCount,
+        directBuffer,
+        null,
+        columnIndexes,
+        dictionary);
   }
 
   LoadedRulesetImpl(
@@ -54,6 +65,7 @@ final class LoadedRulesetImpl implements LoadedRuleset {
       List<ColumnDefinition> columns,
       List<ColumnDecoder> decoders,
       int[] ruleOrder,
+      int rowCount,
       ByteBuffer directBuffer,
       AutoCloseable resource,
       List<PostingListIndex> columnIndexes,
@@ -61,7 +73,8 @@ final class LoadedRulesetImpl implements LoadedRuleset {
     this.metadata = metadata;
     this.columns = List.copyOf(columns);
     this.decoders = List.copyOf(decoders);
-    this.ruleOrder = ruleOrder.clone();
+    this.ruleOrder = ruleOrder != null ? ruleOrder.clone() : null;
+    this.rowCount = rowCount;
     this.directBuffer = directBuffer;
     this.resource = resource;
     // Use unmodifiableList since columnIndexes may contain nulls (non-indexed columns)
@@ -95,7 +108,8 @@ final class LoadedRulesetImpl implements LoadedRuleset {
             this.decoders,
             this.columnIndexes,
             this.inputColumnIndices,
-            this.ruleOrder);
+            this.ruleOrder,
+            rowCount);
   }
 
   @Override

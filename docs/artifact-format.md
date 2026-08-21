@@ -32,7 +32,7 @@ A compiled artifact is a self-contained binary file that contains:
 | Offset | Size | Field | Description |
 |--------|------|-------|-------------|
 | 0 | 4 | magic | Magic bytes: `0x4B495353` ("KISS") |
-| 4 | 2 | version_major | Format major version (currently 2) |
+| 4 | 2 | version_major | Format major version (currently 3) |
 | 6 | 2 | version_minor | Format minor version (currently 0) |
 | 8 | 1 | artifact_kind | 0 = PRODUCTION, 1 = TEST_INCLUSIVE |
 | 9 | 1 | rule_selection | 0 = AUTO, 1 = PRIORITY, 2 = FIRST_MATCH |
@@ -163,6 +163,19 @@ Data is stored column-by-column, not row-by-row. This enables:
 ```
 - Stores both min and max for each row
 
+**RULE_ID (inline UTF-8):**
+```
+┌──────────────────────────────────────────┐
+│ presence_bitmap (ceil(row_count/8) bytes)│
+│ byte_offsets[row_count+1] (4 bytes each) │
+│ utf8_blob                                │
+└──────────────────────────────────────────┘
+```
+- Rule ids are unique per row by design, so dictionary-encoding them would make the
+  dictionary linear in the row count. They are stored as raw UTF-8 instead: row i's bytes are
+  `utf8_blob[byte_offsets[i] .. byte_offsets[i+1])`, decoded on demand for the one winning
+  row of an evaluation. `byte_offsets[row_count]` is the blob size.
+
 **Set operators (IN, NOT_IN):**
 ```
 ┌─────────────────────────────────────────┐
@@ -231,8 +244,12 @@ apply the ordering twice.
 - **Major version change**: Breaking format change, old loaders cannot read new artifacts
 - **Minor version change**: Backward-compatible additions, old loaders can read new artifacts
 
-Current version: 2.0
+Current version: 3.0
 
+- **3.0**: The `RULE_ID` column is stored as inline UTF-8 (presence bitmap, byte offsets,
+  blob) instead of dictionary codes. Rule ids are unique per row, so this removes the
+  dictionary's linear-in-rows growth; ids are decoded on demand from the buffer for the
+  winning row only. **Not readable by 2.x** — recompile the artifact.
 - **2.0**: Values are stored as 64-bit order-preserving codes instead of 4-byte dictionary IDs
   and narrowed ints, so ordering operators work on every column type and `INTEGER` keeps its
   full range. Dictionary entries are written in sorted order, and `DECIMAL`/`TIMESTAMP` values
@@ -253,7 +270,7 @@ R2,21,0.15
 ```
 
 Would produce:
-1. Header: magic=KISS, version=2.0, columns=3, rows=2
+1. Header: magic=KISS, version=3.0, columns=3, rows=2
 2. Dictionary: ["R1", "R2", "0.10", "0.15"]
 3. Column defs: RULE_ID (RULE_ID, STRING), AGE (GTE, INTEGER), DISCOUNT (SET, DECIMAL)
 4. Rule data:

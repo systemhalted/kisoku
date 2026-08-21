@@ -25,12 +25,13 @@ final class BinaryArtifactWriter {
   static final int MAGIC = 0x4B495353;
 
   /**
-   * Major version 2 stores every value as an order-preserving 64-bit code rather than a 4-byte
-   * dictionary ID or narrowed int, so ordering operators are meaningful on STRING, DECIMAL and
-   * TIMESTAMP columns. Column definitions carry a decimal scale and grew from 12 to 16 bytes, and
-   * dictionary entries are written in sorted order. The layout is not readable by 1.x.
+   * Major version 3 stores the RULE_ID column as inline UTF-8 (presence bitmap, byte offsets, blob)
+   * instead of dictionary codes, so rule ids - unique per row by design - no longer enter the
+   * dictionary or the loader's heap. Version 2 introduced order-preserving 64-bit value codes,
+   * sorted dictionary entries, and per-column decimal scales. Neither layout is readable by earlier
+   * majors.
    */
-  static final short VERSION_MAJOR = 2;
+  static final short VERSION_MAJOR = 3;
 
   static final short VERSION_MINOR = 0;
 

@@ -9,7 +9,10 @@ import java.nio.ByteBuffer;
  * <p>Implementations handle different operator types with their specific data formats.
  */
 sealed interface ColumnDecoder
-    permits ScalarColumnDecoder, RangeColumnDecoder, SetMembershipColumnDecoder {
+    permits ScalarColumnDecoder,
+        RangeColumnDecoder,
+        SetMembershipColumnDecoder,
+        InlineStringColumnDecoder {
 
   /**
    * Check if the input value matches the condition at the given row.
@@ -77,7 +80,8 @@ sealed interface ColumnDecoder
       StringDictionaryReader dictionary) {
     Operator op = column.operator();
     return switch (op) {
-      case RULE_ID, PRIORITY, SET, EQ, NE, GT, GTE, LT, LTE ->
+      case RULE_ID -> InlineStringColumnDecoder.create(buffer, base, rowCount);
+      case PRIORITY, SET, EQ, NE, GT, GTE, LT, LTE ->
           ScalarColumnDecoder.create(column, buffer, base, rowCount, dictionary);
       case BETWEEN_INCLUSIVE, BETWEEN_EXCLUSIVE, NOT_BETWEEN_INCLUSIVE, NOT_BETWEEN_EXCLUSIVE ->
           RangeColumnDecoder.create(column, buffer, base, rowCount, dictionary);

@@ -80,6 +80,7 @@ public final class CsvRulesetLoader implements RulesetLoader {
         reader.columns(),
         reader.decoders(),
         reader.ruleOrder(),
+        reader.rowCount(),
         buffer.isDirect() ? buffer : null,
         resource,
         indexes,
@@ -123,6 +124,7 @@ public final class CsvRulesetLoader implements RulesetLoader {
         reader.columns(),
         reader.decoders(),
         reader.ruleOrder(),
+        reader.rowCount(),
         null, // No direct buffer to clean up
         indexes,
         dictionary);
@@ -152,6 +154,7 @@ public final class CsvRulesetLoader implements RulesetLoader {
         reader.columns(),
         reader.decoders(),
         reader.ruleOrder(),
+        reader.rowCount(),
         direct, // Keep reference for potential cleanup
         indexes,
         dictionary);

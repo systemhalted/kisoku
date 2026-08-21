@@ -24,8 +24,8 @@ import java.util.List;
  *
  * <p>The enumerated fast paths return the smallest matching physical row, which equals "first in
  * evaluation order" only when the rule order is the identity permutation - true for every artifact
- * this compiler writes, and verified at construction; otherwise every lookup takes the
- * order-faithful linear scan.
+ * this compiler writes (represented as a null order array); a non-identity order routes every
+ * lookup through the order-faithful linear scan.
  *
  * <p>Immutable and thread-safe: holds only immutable ruleset state.
  */
@@ -43,7 +43,7 @@ final class IndexedMatcher {
   private final List<PostingListIndex> columnIndexes; // positional with columns; may be null
   private final int[] inputColumnIndices; // slot -> column position
   private final boolean[] testOnlySlot; // slot -> skip during matching
-  private final int[] ruleOrder;
+  private final int[] ruleOrder; // null = identity permutation
   private final int rowCount;
   private final boolean identityOrder;
 
@@ -52,27 +52,20 @@ final class IndexedMatcher {
       List<ColumnDecoder> decoders,
       List<PostingListIndex> columnIndexes,
       int[] inputColumnIndices,
-      int[] ruleOrder) {
+      int[] ruleOrder,
+      int rowCount) {
     this.columns = columns;
     this.decoders = decoders;
     this.columnIndexes = columnIndexes;
     this.inputColumnIndices = inputColumnIndices;
     this.ruleOrder = ruleOrder;
-    this.rowCount = ruleOrder.length;
+    this.rowCount = rowCount;
+    this.identityOrder = ruleOrder == null;
 
     this.testOnlySlot = new boolean[inputColumnIndices.length];
     for (int k = 0; k < inputColumnIndices.length; k++) {
       testOnlySlot[k] = columns.get(inputColumnIndices[k]).isTestOnly();
     }
-
-    boolean identity = true;
-    for (int i = 0; i < ruleOrder.length; i++) {
-      if (ruleOrder[i] != i) {
-        identity = false;
-        break;
-      }
-    }
-    this.identityOrder = identity;
   }
 
   /**
@@ -176,6 +169,14 @@ final class IndexedMatcher {
 
   /** Order-faithful fallback: verify every rule in evaluation order, first match wins. */
   private int linearScan(long[] codes, boolean[] present) {
+    if (ruleOrder == null) {
+      for (int row = 0; row < rowCount; row++) {
+        if (matchesAllInputs(codes, present, row)) {
+          return row;
+        }
+      }
+      return -1;
+    }
     for (int row : ruleOrder) {
       if (matchesAllInputs(codes, present, row)) {
         return row;

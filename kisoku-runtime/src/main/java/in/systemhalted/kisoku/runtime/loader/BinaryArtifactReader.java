@@ -39,7 +39,7 @@ final class BinaryArtifactReader {
   /** Magic bytes: "KISS" (0x4B495353) */
   static final int MAGIC = 0x4B495353;
 
-  static final short VERSION_MAJOR = 2;
+  static final short VERSION_MAJOR = 3;
 
   /**
    * Highest minor version this reader understands. The reader accepts any minor version with a
@@ -185,6 +185,7 @@ final class BinaryArtifactReader {
       ColumnDefinition column, ByteBuffer buffer, int base, int rowCount) {
     int bitmapSize = BitMapUtils.bitmapSize(rowCount);
     return switch (column.operator()) {
+      case RULE_ID -> InlineStringColumnDecoder.dataSize(buffer, base, rowCount);
       case BETWEEN_INCLUSIVE, BETWEEN_EXCLUSIVE, NOT_BETWEEN_INCLUSIVE, NOT_BETWEEN_EXCLUSIVE ->
           bitmapSize + rowCount * VALUE_SIZE * 2;
       case IN, NOT_IN -> {
@@ -230,13 +231,30 @@ final class BinaryArtifactReader {
     return List.copyOf(columns);
   }
 
+  /**
+   * Reads the evaluation-order sequence, or returns null for the identity permutation.
+   *
+   * <p>The compiler writes rows to the rule-data section already in evaluation order, so the stored
+   * sequence is the identity for every artifact it produces. Representing that implicitly avoids
+   * holding a 4-bytes-per-row array on the heap for the normal case; a non-identity sequence (a
+   * foreign or corrupted artifact) is still materialized and honored.
+   */
   private static int[] readRuleOrder(ByteBuffer buffer, int offset, int rowCount) {
     int pos = offset;
     pos += 1; // order_type byte (unused here; evaluation order is the stored sequence)
+    boolean identity = true;
+    for (int i = 0; i < rowCount; i++) {
+      if (buffer.getInt(pos + i * 4) != i) {
+        identity = false;
+        break;
+      }
+    }
+    if (identity) {
+      return null;
+    }
     int[] order = new int[rowCount];
     for (int i = 0; i < rowCount; i++) {
-      order[i] = buffer.getInt(pos);
-      pos += 4;
+      order[i] = buffer.getInt(pos + i * 4);
     }
     return order;
   }
@@ -296,6 +314,7 @@ final class BinaryArtifactReader {
     return decoders;
   }
 
+  /** Evaluation-order sequence over physical rows, or null for the identity permutation. */
   int[] ruleOrder() {
     return ruleOrder;
   }

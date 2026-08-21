@@ -456,9 +456,11 @@ These matter because they are load-bearing for design decisions:
    direct buffers, one entry per present cell, off the heap (ADR-0011). The
    *persist into the artifact at compile time* half remains open; indexes are
    still built at load time.
-6. **Get `RULE_ID` out of the heap dictionary** (§3.1). Store it as an offset+
-   length blob in the artifact and decode on demand — it is only ever needed for
-   the one winning row. Same for high-cardinality `DECIMAL`/`TIMESTAMP` columns.
+6. ~~**Get `RULE_ID` out of the heap dictionary**~~ (§3.1). **Fixed** — artifact
+   format 3.0 stores `RULE_ID` as inline UTF-8 (offsets + blob) decoded on demand
+   for the winning row; `DECIMAL`/`TIMESTAMP` left the dictionary in 2.0. The
+   rule-order identity permutation is also no longer materialized. Load-time heap
+   is now constant in row count (§10).
 7. ~~**Bound the per-evaluation working set**~~ (§3.3). **Fixed** — the
    bitmap-intersection pipeline is gone; evaluation allocates two small per-call
    arrays sized by column count, constant in rows (measured 1.0 KB/eval at both
@@ -592,3 +594,33 @@ Consequences for the §4 scorecard:
 Still open in Tier 2: compile-time index persistence (load-time build remains), `RULE_ID`
 out of the heap dictionary (fix 6), 64-bit artifact offsets + streaming writer (fix 10),
 and the streaming compiler (§3.7).
+
+
+---
+
+## 10. What the dictionary/RULE_ID rework changed
+
+Artifact format 3.0: the `RULE_ID` column is stored as inline UTF-8 (presence bitmap, byte
+offsets, blob) instead of dictionary codes, decoded on demand from the (memory-mapped) buffer
+for the one winning row of an evaluation. Rule ids are unique per row by design, so this
+removes the dictionary's linear-in-rows growth — the dictionary now holds only column names
+and distinct STRING input/output values. The rule-order section's identity permutation (4
+bytes/row on heap) is also represented implicitly; a non-identity order (a foreign artifact)
+is still materialized and honored via the linear-scan path.
+
+| Heap after mmap load (10 EQ cols × 500 distinct) | §3 baseline | after §9 | after §10 |
+|---|---|---|---|
+| 200K rows | 144.3 MB | 10.8 MB | **0.1 MB** |
+| 400K rows | 291.1 MB | 21.5 MB | **0.1 MB** |
+| 5M rows | (projected ~1.8 GB) | 269 MB | **0.2 MB** |
+
+Load-time heap is now **constant in table size** — 0.0 bytes/row at 5M rows. The 5M
+compile also came in at 58.2 s (under the 60 s target on this shape, versus 84.9 s in §9)
+because rule ids as inline bytes are smaller than 8-byte codes plus dictionary entries;
+the compiler is still non-streaming, so treat that as borderline, not solved. Combined with §9's constant per-evaluation
+allocation, the JVM-heap side of NFR2/NFR3 no longer scales with rows at all for this shape;
+the table, indexes, and rule ids all live off-heap (mmap + direct buffers).
+
+Still open in Tier 2: compile-time index persistence, 64-bit artifact offsets + streaming
+writer, and the streaming compiler (§3.7) — compile-time heap and the 60 s compile target
+remain the outstanding scale problems.

@@ -53,13 +53,24 @@ under 1 GB with bounded per-evaluation working set.
 - Enforce type-specific constraints per `ColumnType` (STRING, INTEGER, DECIMAL,
   BOOLEAN, DATE, TIMESTAMP).
 
+## Value Encoding
+- Every column type reduces to one 64-bit **order-preserving code**, so comparing codes is
+  comparing values. Strings encode as their rank in the *sorted* dictionary, decimals as the
+  unscaled value at the column's scale, dates as epoch days, timestamps as epoch microseconds.
+- Codes are doubled, leaving odd numbers to mean "strictly between two representable values".
+  An input the compiler never saw (a string not in the dictionary, a decimal finer than the
+  column's scale) takes such a code: it orders correctly and equals nothing.
+- See `docs/artifact-format.md` for the stored layout.
+
 ## Operator Storage (Conceptual)
-- `RULE_ID`: dictionary id or string offsets per row.
-- `PRIORITY`: `int[]` per row.
-- `BETWEEN_*`/`NOT_BETWEEN_*`: `minId[]`, `maxId[]`, `hasCondition` bitset.
-- `IN`/`NOT_IN`: `listOffsets[]`, `listLengths[]`, `listValueIds[]`,
+- `RULE_ID`: inline UTF-8 (byte offsets + blob), decoded on demand for the winning row only.
+  Rule ids are unique per row, so they never enter the dictionary — keeping the dictionary,
+  and load-time heap, independent of row count.
+- `PRIORITY`: value code per row.
+- `BETWEEN_*`/`NOT_BETWEEN_*`: `min[]`, `max[]` codes, `hasCondition` bitset.
+- `IN`/`NOT_IN`: `listOffsets[]`, `listLengths[]`, `listValues[]` codes,
   `hasCondition` bitset.
-- `SET` outputs: `valueId[]`, `hasValue` bitset.
+- `SET` outputs: `value[]` codes, `hasValue` bitset.
 
 ## Artifact Layout (Conceptual)
 - Header: magic, format version, artifact kind, schema hash, byte order.

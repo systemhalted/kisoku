@@ -176,7 +176,7 @@ Supported `ColumnType`s (see [Schema API](#schema-api)):
 - `TIMESTAMP` (ISO-8601 local date-time)
 
 ## Operator Storage (Conceptual)
-- `RULE_ID`: stored per row, typically dictionary-encoded.
+- `RULE_ID`: stored per row as inline UTF-8 in the artifact, decoded only for the winning row.
 - `PRIORITY`: required per row when the column exists. Can be overridden by CompileOptions.
 - `BETWEEN_*`/`NOT_BETWEEN_*`: store `min` and `max` values plus a presence flag.
 - `IN`/`NOT_IN`: store a value list and a presence flag.
