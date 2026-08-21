@@ -264,8 +264,11 @@ final class LoadedRulesetImpl implements LoadedRuleset {
         continue;
       }
 
+      // A blank output cell has no value; omit the key rather than mapping it to null.
       Object value = decoder.getValue(rowIndex);
-      outputs.put(col.name(), value);
+      if (value != null) {
+        outputs.put(col.name(), value);
+      }
     }
 
     // Get RULE_ID

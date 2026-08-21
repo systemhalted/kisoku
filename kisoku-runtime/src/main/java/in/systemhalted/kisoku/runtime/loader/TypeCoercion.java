@@ -67,7 +67,12 @@ final class TypeCoercion {
   /**
    * Decode a stored code back to a Java object for output.
    *
-   * @param code the stored code
+   * <p>Presence is the caller's business: the column's presence bitmap says whether a cell holds a
+   * value, and this method decodes whatever code it is handed. It must not read {@link
+   * ComparableCodes#NULL_CODE} as "no value", because several types encode a perfectly ordinary
+   * value to that code - decimal zero, {@code 1970-01-01}, the epoch instant, {@code false}.
+   *
+   * @param code the stored code, from a cell the caller has already confirmed is present
    * @param type the column type
    * @param scale the column's decimal scale (DECIMAL only)
    * @param dictionary the string dictionary
@@ -75,12 +80,6 @@ final class TypeCoercion {
    */
   static Object decodeValue(
       long code, ColumnType type, int scale, StringDictionaryReader dictionary) {
-    if (code == ComparableCodes.NULL_CODE
-        && type != ColumnType.INTEGER
-        && type != ColumnType.BOOLEAN) {
-      return null;
-    }
-
     return switch (type) {
       case STRING -> dictionary.get((int) ComparableCodes.decodeExact(code));
       case INTEGER -> ValueCodec.decodeInteger(code);

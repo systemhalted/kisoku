@@ -157,6 +157,68 @@ class ValueOrderingTest {
         });
   }
 
+  /**
+   * Values whose code is 0 must still decode. Regression: decoding treated code 0 as "no value",
+   * but decimal zero, {@code 1970-01-01}, the epoch instant and {@code false} all encode to 0, so a
+   * legitimate output silently became null - and then failed the output map's null check.
+   */
+  @Test
+  void zeroValuedOutputsDecodeRatherThanVanishing(@TempDir Path dir) throws IOException {
+    Path csv =
+        writeCsv(
+            dir,
+            "zero-outputs.csv",
+            "RULE_ID,REGION,DISCOUNT,STARTS_ON,ACTIVE",
+            "RULE_ID,EQ,SET,SET,SET",
+            "ZEROES,APAC,0.00,1970-01-01,false");
+    Schema schema =
+        Schema.builder()
+            .column("REGION", ColumnType.STRING)
+            .column("DISCOUNT", ColumnType.DECIMAL)
+            .column("STARTS_ON", ColumnType.DATE)
+            .column("ACTIVE", ColumnType.BOOLEAN)
+            .build();
+
+    forEachPath(
+        csv,
+        schema,
+        ruleset -> {
+          Map<String, Object> outputs =
+              ruleset.evaluate(DecisionInput.of(Map.of("REGION", "APAC"))).outputs();
+          assertEquals(new BigDecimal("0.00"), outputs.get("DISCOUNT"));
+          assertEquals(LocalDate.of(1970, 1, 1), outputs.get("STARTS_ON"));
+          assertEquals(false, outputs.get("ACTIVE"));
+        });
+  }
+
+  /** A blank output cell yields no key at all, rather than a null value. */
+  @Test
+  void blankOutputCellsAreOmitted(@TempDir Path dir) throws IOException {
+    Path csv =
+        writeCsv(
+            dir,
+            "blank-output.csv",
+            "RULE_ID,REGION,DISCOUNT,NOTE",
+            "RULE_ID,EQ,SET,SET",
+            "PARTIAL,APAC,0.05,");
+    Schema schema =
+        Schema.builder()
+            .column("REGION", ColumnType.STRING)
+            .column("DISCOUNT", ColumnType.DECIMAL)
+            .column("NOTE", ColumnType.STRING)
+            .build();
+
+    forEachPath(
+        csv,
+        schema,
+        ruleset -> {
+          Map<String, Object> outputs =
+              ruleset.evaluate(DecisionInput.of(Map.of("REGION", "APAC"))).outputs();
+          assertEquals(new BigDecimal("0.05"), outputs.get("DISCOUNT"));
+          assertEquals(false, outputs.containsKey("NOTE"), "blank output cell should be omitted");
+        });
+  }
+
   @Test
   void stringComparesLexicographically(@TempDir Path dir) throws IOException {
     Path csv =

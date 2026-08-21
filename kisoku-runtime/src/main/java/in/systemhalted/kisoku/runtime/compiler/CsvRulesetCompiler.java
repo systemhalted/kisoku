@@ -320,6 +320,19 @@ public final class CsvRulesetCompiler implements RulesetCompiler {
         || op == Operator.NOT_BETWEEN_EXCLUSIVE;
   }
 
+  /**
+   * Orders rows for evaluation.
+   *
+   * <p>A <em>lower</em> PRIORITY value means a higher priority, so rows sort ascending: priority 1
+   * is considered before priority 2. Ties keep their source order, since the sort is stable. A row
+   * with no priority value sorts last, so an unnumbered rule can never pre-empt a numbered one.
+   *
+   * @param rows all data rows
+   * @param priorityIndex column index of the priority column, or -1
+   * @param hasPriority whether a usable PRIORITY column is present
+   * @param policy the configured rule selection policy
+   * @return source row indices in evaluation order
+   */
   private List<Integer> buildRuleOrder(
       List<String[]> rows, int priorityIndex, boolean hasPriority, RuleSelectionPolicy policy) {
     List<Integer> order = new ArrayList<>();
@@ -333,20 +346,31 @@ public final class CsvRulesetCompiler implements RulesetCompiler {
             && (policy == RuleSelectionPolicy.PRIORITY || policy == RuleSelectionPolicy.AUTO);
 
     if (usePriority) {
-      final int pIdx = priorityIndex;
-      order.sort(
-          Comparator.comparingInt(
-                  (Integer i) -> {
-                    String[] row = rows.get(i);
-                    if (pIdx >= row.length) return 0;
-                    String val = row[pIdx];
-                    if (val == null || val.isEmpty()) return 0;
-                    return Integer.parseInt(val.trim());
-                  })
-              .reversed()); // Descending order (higher priority first)
+      // Extract the key once per row rather than re-parsing it on every comparison.
+      int[] priorities = new int[rows.size()];
+      for (int i = 0; i < rows.size(); i++) {
+        priorities[i] = priorityOf(rows.get(i), priorityIndex);
+      }
+      order.sort(Comparator.comparingInt((Integer i) -> priorities[i]));
     }
 
     return order;
+  }
+
+  /** Reads a row's priority; an absent or blank value ranks last. */
+  private int priorityOf(String[] row, int priorityIndex) {
+    if (priorityIndex >= row.length) {
+      return Integer.MAX_VALUE;
+    }
+    String value = row[priorityIndex];
+    if (value == null || value.isBlank()) {
+      return Integer.MAX_VALUE;
+    }
+    try {
+      return Integer.parseInt(value.trim());
+    } catch (NumberFormatException e) {
+      throw new CompilationException("PRIORITY value '" + value + "' is not an integer", e);
+    }
   }
 
   private byte[] encodeColumnDefinitions(
