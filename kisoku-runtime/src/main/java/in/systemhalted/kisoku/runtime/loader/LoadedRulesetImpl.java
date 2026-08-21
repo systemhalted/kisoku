@@ -7,8 +7,7 @@ import in.systemhalted.kisoku.api.evaluation.DecisionOutput;
 import in.systemhalted.kisoku.api.evaluation.EvaluationException;
 import in.systemhalted.kisoku.api.loading.LoadedRuleset;
 import in.systemhalted.kisoku.runtime.csv.Operator;
-import in.systemhalted.kisoku.runtime.loader.index.CandidateBitmap;
-import in.systemhalted.kisoku.runtime.loader.index.ColumnIndex;
+import in.systemhalted.kisoku.runtime.loader.index.PostingListIndex;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -35,9 +34,9 @@ final class LoadedRulesetImpl implements LoadedRuleset {
   private final int ruleIdColumnIndex;
 
   // Indexed evaluation support
-  private final List<ColumnIndex> columnIndexes; // May be null if indexing disabled
-  private final long[] allRowsBitmap; // All rows as candidates, or null
-  private final StringDictionaryReader dictionary; // For type coercion during indexed eval
+  private final List<PostingListIndex> columnIndexes; // May be null if indexing disabled
+  private final IndexedMatcher matcher;
+  private final StringDictionaryReader dictionary; // For input coercion
 
   LoadedRulesetImpl(
       RulesetMetadata metadata,
@@ -45,7 +44,7 @@ final class LoadedRulesetImpl implements LoadedRuleset {
       List<ColumnDecoder> decoders,
       int[] ruleOrder,
       ByteBuffer directBuffer,
-      List<ColumnIndex> columnIndexes,
+      List<PostingListIndex> columnIndexes,
       StringDictionaryReader dictionary) {
     this(metadata, columns, decoders, ruleOrder, directBuffer, null, columnIndexes, dictionary);
   }
@@ -57,7 +56,7 @@ final class LoadedRulesetImpl implements LoadedRuleset {
       int[] ruleOrder,
       ByteBuffer directBuffer,
       AutoCloseable resource,
-      List<ColumnIndex> columnIndexes,
+      List<PostingListIndex> columnIndexes,
       StringDictionaryReader dictionary) {
     this.metadata = metadata;
     this.columns = List.copyOf(columns);
@@ -90,12 +89,13 @@ final class LoadedRulesetImpl implements LoadedRuleset {
     this.outputColumnIndices = outputIndices.stream().mapToInt(Integer::intValue).toArray();
     this.ruleIdColumnIndex = ruleIdIdx;
 
-    // Pre-compute all-rows bitmap for indexed evaluation
-    if (columnIndexes != null && !columnIndexes.isEmpty()) {
-      this.allRowsBitmap = CandidateBitmap.allOnes(ruleOrder.length);
-    } else {
-      this.allRowsBitmap = null;
-    }
+    this.matcher =
+        new IndexedMatcher(
+            this.columns,
+            this.decoders,
+            this.columnIndexes,
+            this.inputColumnIndices,
+            this.ruleOrder);
   }
 
   @Override
@@ -110,93 +110,31 @@ final class LoadedRulesetImpl implements LoadedRuleset {
   /**
    * Finds the winning rule row for an input.
    *
+   * <p>Coerces every input column once into the comparable-code domain, then delegates to the
+   * {@link IndexedMatcher}, which drives matching from the most selective indexed column (or a
+   * linear scan when no index helps).
+   *
    * @param input the evaluation input
    * @return the physical row index of the first matching rule in evaluation order, or -1 if no rule
    *     matches
    */
   private int findMatchingRow(DecisionInput input) {
-    // Use indexed evaluation if indexes are available
-    if (columnIndexes != null && allRowsBitmap != null) {
-      return findMatchingRowIndexed(input);
-    }
+    long[] codes = new long[inputColumnIndices.length];
+    boolean[] present = new boolean[inputColumnIndices.length];
 
-    // Fallback to linear scan
-    return findMatchingRowLinear(input);
-  }
-
-  /**
-   * Linear evaluation: O(n) scan through all rules in order.
-   *
-   * <p>Used when indexes are not available.
-   */
-  private int findMatchingRowLinear(DecisionInput input) {
-    for (int rowIndex : ruleOrder) {
-      if (matchesAllInputs(rowIndex, input)) {
-        return rowIndex;
-      }
-    }
-    return -1;
-  }
-
-  /**
-   * Indexed evaluation: filter candidates via bitmap intersection, then verify.
-   *
-   * <p>Algorithm: 1. Start with all rows as candidates 2. For each indexed column, intersect with
-   * column's candidate bitmap 3. Iterate remaining candidates in priority order 4. Verify full
-   * match (handles non-indexed columns and blank cells)
-   */
-  private int findMatchingRowIndexed(DecisionInput input) {
-    // Start with all rows as candidates
-    long[] candidates = CandidateBitmap.copy(allRowsBitmap);
-
-    // Intersect with each indexed column's candidates
-    for (int colIdx : inputColumnIndices) {
-      ColumnIndex index = columnIndexes.get(colIdx);
-      if (index == null) {
-        continue; // Column not indexed, will be verified later
-      }
-
-      ColumnDefinition col = columns.get(colIdx);
+    for (int k = 0; k < inputColumnIndices.length; k++) {
+      ColumnDefinition col = columns.get(inputColumnIndices[k]);
       if (col.isTestOnly()) {
         continue;
       }
-
-      // An absent input can only be satisfied by blank cells; a supplied value goes through the
-      // index. The two cases are distinct even though both may coerce to NULL_CODE.
-      Object inputValue = input.get(col.name()).orElse(null);
-      long[] colCandidates =
-          inputValue == null
-              ? index.candidatesForAbsentInput()
-              : index.getCandidates(
-                  TypeCoercion.toComparableCode(inputValue, col.type(), col.scale(), dictionary));
-      CandidateBitmap.andInPlace(candidates, colCandidates);
-
-      // Early termination if no candidates remain
-      if (CandidateBitmap.isEmpty(candidates)) {
-        return -1;
-      }
+      Object value = input.get(col.name()).orElse(null);
+      present[k] = value != null;
+      codes[k] = TypeCoercion.toComparableCode(value, col.type(), col.scale(), dictionary);
     }
 
-    // Iterate candidates in priority order (ruleOrder) and verify full match
-    for (int rowIndex : ruleOrder) {
-      if (CandidateBitmap.isSet(candidates, rowIndex)) {
-        // Verify all inputs match (handles non-indexed columns)
-        if (matchesAllInputs(rowIndex, input)) {
-          return rowIndex;
-        }
-      }
-    }
-
-    return -1;
+    return matcher.findFirstMatch(codes, present);
   }
 
-  /**
-   * {@inheritDoc}
-   *
-   * <p>Each variant is evaluated independently: a variant that matches no rule contributes an empty
-   * result rather than failing the batch, so one unmatched variant never discards the outputs of
-   * the others.
-   */
   @Override
   public BulkResult evaluateBulk(DecisionInput base, List<DecisionInput> variants) {
     List<DecisionOutput> results = new ArrayList<>(variants.size());
@@ -216,40 +154,13 @@ final class LoadedRulesetImpl implements LoadedRuleset {
     return rowIndex >= 0 ? buildOutput(rowIndex) : null;
   }
 
-  private boolean matchesAllInputs(int rowIndex, DecisionInput input) {
-    for (int colIdx : inputColumnIndices) {
-      ColumnDecoder decoder = decoders.get(colIdx);
-      ColumnDefinition col = columns.get(colIdx);
-
-      // Skip TEST_ columns during evaluation
-      if (col.isTestOnly()) {
-        continue;
-      }
-
-      String columnName = col.name();
-      Object inputValue = input.get(columnName).orElse(null);
-
-      if (!decoder.matches(rowIndex, inputValue)) {
-        return false;
-      }
-    }
-    return true;
-  }
-
   /**
    * Creates a columnar bulk evaluation kernel sharing this ruleset's immutable state. Package
    * private; the public bulk API is layered on top in a later slice.
    */
   ColumnarBulkKernel bulkKernel() {
     return new ColumnarBulkKernel(
-        columns,
-        decoders,
-        ruleOrder,
-        inputColumnIndices,
-        columnIndexes,
-        allRowsBitmap,
-        dictionary,
-        this::buildOutput);
+        columns, inputColumnIndices, matcher, dictionary, this::buildOutput);
   }
 
   private DecisionOutput buildOutput(int rowIndex) {

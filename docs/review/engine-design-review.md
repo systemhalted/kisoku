@@ -452,20 +452,23 @@ These matter because they are load-bearing for design decisions:
 
 **Tier 2 — scale (these decide whether the PRD numbers are reachable)**
 
-5. **Compress and persist the indexes** (§3.2). Roaring bitmaps (or delta-encoded
-   posting lists) instead of dense `long[]` per value, built at *compile* time
-   into the artifact and read through the mapping — not rebuilt on heap at load.
-   Enforce a budget using the `memorySizeBytes()` that already exists, and index
-   selectively (skip low-selectivity columns) rather than every eligible column.
+5. ~~**Compress the indexes**~~ (§3.2). **Fixed** — posting-list (CSR) indexes in
+   direct buffers, one entry per present cell, off the heap (ADR-0011). The
+   *persist into the artifact at compile time* half remains open; indexes are
+   still built at load time.
 6. **Get `RULE_ID` out of the heap dictionary** (§3.1). Store it as an offset+
    length blob in the artifact and decode on demand — it is only ever needed for
    the one winning row. Same for high-cardinality `DECIMAL`/`TIMESTAMP` columns.
-7. **Bound the per-evaluation working set** (§3.3). Reuse a thread-local scratch
-   bitmap (copy the `ColumnarBulkKernel` pattern), and have `getCandidates`
-   intersect *into* the caller's buffer instead of allocating a new one.
-8. **Iterate set bits, not all rows** (§3.4), and track cardinality incrementally.
-9. **Prefix-OR bitmaps for `ComparisonIndex`** (§3.5) — turns an O(distinct)
-   lookup into O(log distinct).
+7. ~~**Bound the per-evaluation working set**~~ (§3.3). **Fixed** — the
+   bitmap-intersection pipeline is gone; evaluation allocates two small per-call
+   arrays sized by column count, constant in rows (measured 1.0 KB/eval at both
+   200K and 400K rows, down from 74/147 KB).
+8. ~~**Iterate set bits, not all rows**~~ (§3.4). **Fixed** — candidates are
+   enumerated from the driver column's postings slice directly; matching-eval
+   latency is flat across table sizes (12 µs at 200K and at 1M rows).
+9. ~~**Prefix-OR bitmaps for `ComparisonIndex`**~~ (§3.5). **Fixed differently** —
+   comparison lookups are an O(log distinct) offset subtraction on the CSR
+   layout; no per-threshold bitmaps exist to OR.
 10. **64-bit artifact offsets and a streaming artifact writer** (§3.6), plus a
     genuinely streaming two-pass compiler (§3.7) so compilation memory is
     independent of row count.
@@ -550,3 +553,42 @@ rather than as a `String`, and `INTEGER` outputs as `Long`. `BulkResult` gained
 `null` where nothing matched. `DATE` inputs must be a `LocalDate` — the old
 "bare `Integer` means epoch day" path is gone, since it silently read a year as
 a day number.
+
+
+---
+
+## 9. What the Tier 2 index rework changed
+
+Same probes as §3, rebuilt jars. The dense per-value bitmaps (§3.2) are replaced by
+off-heap posting-list (CSR) indexes with driver-based candidate enumeration (ADR-0011);
+single-eval and the bulk kernel now share one matcher, so bulk/single parity is structural.
+
+| Metric (200K rows × 10 EQ cols × 500 distinct) | Before (§3) | After |
+|---|---|---|
+| Index heap | 120.2 MB, linear in rows | **~0.1 MB** (off-heap direct buffers) |
+| Heap after mmap load, indexes on | 144.3 MB | 10.8 MB |
+| Per-eval allocation | 74.0 KB, linear in rows | **1.0 KB, constant** (also 1.0 KB at 400K) |
+| Matching single eval, median | 45 µs @200K → 160 µs @1M | **12 µs, flat** at both sizes |
+| Bulk 1000 variants | 66–75 ms | 11–20 ms |
+| Linear scan (indexes off) | 5.88 ms/eval | 1.52 ms/eval (inputs coerced once, not per row) |
+
+At PRD-typical row count (5M rows × 10 EQ cols × 500 distinct, mmap load, prewarmed):
+
+- Heap after load: **269 MB** (56.5 bytes/row, dictionary-dominated) — inside the 1 GB budget,
+  where the dense indexes alone would have added ~3 GB for this shape and ~18 GB at 60 columns.
+- Load + index build: 13.3 s (target: <60 s).
+- Worst-case single eval (input matching nothing, so the driver's ~10K candidates are
+  exhausted): median 618 µs against the 250 ms p95 target.
+- Compile: 84.9 s — over the 60 s target, unchanged by this work; that is the non-streaming
+  compiler (§3.7, fix 10).
+
+Consequences for the §4 scorecard:
+
+- **NFR2 (<1 GB heap)**: index heap no longer scales with rows at all; the remaining
+  linear-in-rows heap consumer is the string dictionary (§3.1, `RULE_ID` — fix 6, still open).
+- **NFR3 (bounded per-eval memory)**: now met — measured constant across table sizes.
+- **FR5**: `NE` is now indexed (count-only), leaving only `BETWEEN_*` unindexed.
+
+Still open in Tier 2: compile-time index persistence (load-time build remains), `RULE_ID`
+out of the heap dictionary (fix 6), 64-bit artifact offsets + streaming writer (fix 10),
+and the streaming compiler (§3.7).

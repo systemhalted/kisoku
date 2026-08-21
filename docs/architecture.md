@@ -86,32 +86,39 @@ under 1 GB with bounded per-evaluation working set.
   (`FileChannel.map()`); `onHeap()` uses a heap buffer. In both cases column data
   is read **lazily through the buffer** by the decoders rather than copied into
   per-column heap arrays, keeping large tables off-heap to meet the <1GB budget.
-- Indexes are built at load time (eagerly with `withPrewarmIndexes(true)`, the
-  default, or lazily otherwise).
+- Indexes are built at load time into direct (off-heap) buffers (eagerly with
+  `withPrewarmIndexes(true)`, the default, or not at all otherwise).
 - `LoadedRuleset` is immutable and thread-safe for concurrent evaluation;
   `close()` releases the buffer/mapping.
 
 ## Indexing Strategy
 
-Indexed candidate filtering is implemented (not a linear scan). Coverage:
+Each indexable input column gets one **posting-list (CSR) index in a direct buffer off the
+heap** (see ADR-0011): sorted distinct codes, per-code offsets, row-id postings, and the
+blank-cell rows. Each present cell is stored exactly once, so index size is linear in the
+column's data and independent of value skew.
 
-- **Equality index**: value → bitmap for `EQ` columns.
-- **Comparison index**: sorted-threshold bitmaps for `GT`, `GTE`, `LT`, `LTE`.
-- **Set-membership index**: inverted value → rows bitmap for `IN`, `NOT_IN`
-  (`NOT_IN` served by bitmap complement). See ADR-0009.
-- **Candidate selection**: start from "all rows," fetch each indexed input
-  column's candidate bitmap, intersect (`AND`) into the running set, then verify
-  survivors in deterministic rule order.
+- **Indexed operators**: `EQ`, `NE`, `GT`, `GTE`, `LT`, `LTE` (scalar), `IN`, `NOT_IN`
+  (set membership). Negative operators index for exact candidate *counts* only — their match
+  sets are complements and are never enumerated, but a zero count is a correct early exit.
+- **Candidate selection**: every indexed column reports an exact candidate count for the
+  input in O(log distinct); the most selective enumerable column drives — its candidate rows
+  (postings slice plus blanks) are iterated and each is verified against all input columns
+  through the decoders. Verification is exhaustive, so the driver choice is a pure
+  optimization. Single evaluation and the bulk kernel share this matcher.
 - **Deterministic rule selection**: fixed row order, or `PRIORITY` ascending — a lower value
   means a higher priority, so 1 outranks 2 — with ties broken by source order and unnumbered
   rows last. Rows are written to the artifact already in evaluation order, so the rule-order
-  section stores the identity permutation over physical rows.
+  section stores the identity permutation over physical rows, and ascending row order is
+  evaluation order during candidate enumeration.
 
 Range operators (`BETWEEN_*`) are not yet indexed and fall back to verification.
 
 ### Performance Impact
-- Bitmap intersection reduces the candidate set before per-row verification,
-  meeting the PRD p95 target where linear scan could not at 5M rows.
+- Driver-based candidate enumeration keeps per-evaluation work proportional to the most
+  selective column's candidate count, not the table: matching-eval latency is flat across
+  table sizes, per-evaluation allocation is constant, and index memory is off-heap and
+  linear in the data.
 
 ## Evaluation Path
 

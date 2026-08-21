@@ -73,19 +73,15 @@ class ColumnarBulkKernelParityTest {
   }
 
   private void assertParity(LoadedRulesetImpl ruleset, List<DecisionInput> inputs) {
-    ColumnarBulkKernel base = ruleset.bulkKernel();
-    // Threshold-independence: default, 0 (force full intersection), 1 (force earliest break) must
-    // all agree with single-eval — proving the pruning heuristic is a pure optimization.
-    for (ColumnarBulkKernel kernel :
-        List.of(base, base.withStopThreshold(0), base.withStopThreshold(1))) {
-      DecisionOutput[] bulk = kernel.evaluate(kernel.encode(inputs));
-      assertEquals(inputs.size(), bulk.length);
-      for (int i = 0; i < inputs.size(); i++) {
-        DecisionOutput single = ruleset.evaluate(inputs.get(i));
-        assertNotNull(bulk[i], "bulk produced no match for input " + i);
-        assertEquals(single.ruleId(), bulk[i].ruleId(), "ruleId mismatch at " + i);
-        assertEquals(single.outputs(), bulk[i].outputs(), "outputs mismatch at " + i);
-      }
+    // Bulk and single-eval share the IndexedMatcher, so parity is by construction - this pins it.
+    ColumnarBulkKernel kernel = ruleset.bulkKernel();
+    DecisionOutput[] bulk = kernel.evaluate(kernel.encode(inputs));
+    assertEquals(inputs.size(), bulk.length);
+    for (int i = 0; i < inputs.size(); i++) {
+      DecisionOutput single = ruleset.evaluate(inputs.get(i));
+      assertNotNull(bulk[i], "bulk produced no match for input " + i);
+      assertEquals(single.ruleId(), bulk[i].ruleId(), "ruleId mismatch at " + i);
+      assertEquals(single.outputs(), bulk[i].outputs(), "outputs mismatch at " + i);
     }
   }
 

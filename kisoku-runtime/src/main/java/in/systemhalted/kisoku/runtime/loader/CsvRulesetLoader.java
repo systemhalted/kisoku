@@ -6,7 +6,7 @@ import in.systemhalted.kisoku.api.loading.LoadOptions;
 import in.systemhalted.kisoku.api.loading.LoadedRuleset;
 import in.systemhalted.kisoku.api.loading.RulesetLoader;
 import in.systemhalted.kisoku.runtime.csv.Operator;
-import in.systemhalted.kisoku.runtime.loader.index.ColumnIndex;
+import in.systemhalted.kisoku.runtime.loader.index.PostingListIndex;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
@@ -70,7 +70,7 @@ public final class CsvRulesetLoader implements RulesetLoader {
     BinaryArtifactReader reader = BinaryArtifactReader.read(buffer);
 
     StringDictionaryReader dictionary = reader.dictionary();
-    List<ColumnIndex> indexes = null;
+    List<PostingListIndex> indexes = null;
     if (options.isPrewarmIndexes()) {
       indexes = buildIndexes(reader.columns(), reader.decoders(), reader.rowCount());
     }
@@ -113,7 +113,7 @@ public final class CsvRulesetLoader implements RulesetLoader {
     // The dictionary is always needed (e.g. to coerce string inputs in the bulk kernel),
     // independent of index prewarming.
     StringDictionaryReader dictionary = reader.dictionary();
-    List<ColumnIndex> indexes = null;
+    List<PostingListIndex> indexes = null;
     if (options.isPrewarmIndexes()) {
       indexes = buildIndexes(reader.columns(), reader.decoders(), reader.rowCount());
     }
@@ -142,7 +142,7 @@ public final class CsvRulesetLoader implements RulesetLoader {
     // The dictionary is always needed (e.g. to coerce string inputs in the bulk kernel),
     // independent of index prewarming.
     StringDictionaryReader dictionary = reader.dictionary();
-    List<ColumnIndex> indexes = null;
+    List<PostingListIndex> indexes = null;
     if (options.isPrewarmIndexes()) {
       indexes = buildIndexes(reader.columns(), reader.decoders(), reader.rowCount());
     }
@@ -165,12 +165,12 @@ public final class CsvRulesetLoader implements RulesetLoader {
    * @param rowCount total number of rows
    * @return list of indexes (same size as columns, null for non-indexed columns)
    */
-  private List<ColumnIndex> buildIndexes(
+  private List<PostingListIndex> buildIndexes(
       List<ColumnDefinition> columns, List<ColumnDecoder> decoders, int rowCount) {
-    List<ColumnIndex> indexes = new ArrayList<>(columns.size());
+    List<PostingListIndex> indexes = new ArrayList<>(columns.size());
 
     for (int i = 0; i < columns.size(); i++) {
-      ColumnIndex index = ColumnIndexBuilder.build(decoders.get(i), columns.get(i), rowCount);
+      PostingListIndex index = ColumnIndexBuilder.build(decoders.get(i), columns.get(i), rowCount);
       indexes.add(index); // May be null for non-indexed columns
     }
 
