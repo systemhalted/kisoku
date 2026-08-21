@@ -107,7 +107,10 @@ class OffHeapMemoryTest {
     MemorySnapshot beforeLoad = MemoryTestUtils.stableSnapshot();
     System.out.printf("Before onHeap load: %s%n", beforeLoad.format());
 
-    try (LoadedRuleset ruleset = loader.load(compiled, LoadOptions.onHeap())) {
+    // Indexes always live in direct buffers regardless of load mode; disable prewarming so the
+    // measurement isolates where the artifact's column data lands.
+    try (LoadedRuleset ruleset =
+        loader.load(compiled, LoadOptions.onHeap().withPrewarmIndexes(false))) {
       MemorySnapshot afterLoad = MemoryTestUtils.stableSnapshot();
       System.out.printf("After onHeap load: %s%n", afterLoad.format());
 

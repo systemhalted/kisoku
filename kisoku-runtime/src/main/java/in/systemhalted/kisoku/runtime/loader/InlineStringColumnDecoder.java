@@ -46,20 +46,6 @@ final class InlineStringColumnDecoder implements ColumnDecoder {
     return new InlineStringColumnDecoder(buffer, base, offsetsBase, blobBase);
   }
 
-  /**
-   * Total encoded size of an inline string column, for locating the following section.
-   *
-   * @param buffer the artifact buffer
-   * @param base absolute byte offset of this column's data
-   * @param rowCount number of rows
-   * @return the column's byte size
-   */
-  static int dataSize(ByteBuffer buffer, int base, int rowCount) {
-    int offsetsBase = base + BitMapUtils.bitmapSize(rowCount);
-    int blobSize = buffer.getInt(offsetsBase + rowCount * 4);
-    return BitMapUtils.bitmapSize(rowCount) + (rowCount + 1) * 4 + blobSize;
-  }
-
   @Override
   public boolean matches(int rowIndex, Object inputValue) {
     throw new UnsupportedOperationException("Inline string columns are metadata, never matched");

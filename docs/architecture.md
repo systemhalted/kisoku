@@ -80,14 +80,20 @@ under 1 GB with bounded per-evaluation working set.
 - Index sections: equality and range indexes per column.
 - Optional diagnostics section for test artifacts.
 
-## Compiler Streaming Checklist
-- Read and validate header row + operator row.
-- Build `ColumnSpec` list once and reuse it for row processing.
-- Stream rows:
-  - Validate per-row constraints (RULE_ID, PRIORITY, output presence).
-  - Encode operands to dictionaries and append to column blocks.
-- Flush column blocks and dictionaries to the artifact.
-- Emit test-inclusive and production artifacts with consistent schema hashes.
+## Compiler Streaming Pipeline
+- **Pass 1** streams the CSV: header/operator validation, string dictionary (bounded by
+  distinct values), per-column decimal scales, one priority int per row, row count.
+- Evaluation order is a stable ascending argsort of the priorities (lower value = higher
+  priority); identity when no priority applies.
+- **Pass 2** streams the CSV again, encoding each cell to its order-preserving code and
+  appending it to a per-column temporary file in source order.
+- **Stitch** writes the artifact sequentially — header, dictionary, definitions, then each
+  column: load that one column's temporary file, permute its rows into evaluation order in
+  memory, emit its subsections, delete the temporary.
+- Peak compile heap = dictionary + one int per row + the largest single column's data —
+  independent of total table size. The source's `openStream()` must be re-openable.
+- `CompiledRuleset` is file-backed; artifacts stream through 64-bit offsets and may exceed
+  2 GB (each column's data stays under 2 GB).
 
 ## Loading Strategy
 

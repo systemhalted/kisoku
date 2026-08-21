@@ -12,6 +12,17 @@ public interface CompiledRuleset {
 
   RulesetMetadata metadata();
 
+  /**
+   * The serialized artifact as one array.
+   *
+   * <p>Compiled artifacts are file-backed and may exceed what a single array can hold; this
+   * materializes the file and fails for artifacts over 2 GB. Prefer {@link #writeTo(Path)} plus
+   * {@link in.systemhalted.kisoku.api.loading.RulesetLoader#load(Path,
+   * in.systemhalted.kisoku.api.loading.LoadOptions)}, or loading the compiled ruleset directly,
+   * both of which stream or map instead.
+   *
+   * @return the artifact bytes
+   */
   byte[] bytes();
 
   /**

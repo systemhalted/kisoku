@@ -15,13 +15,37 @@ import in.systemhalted.kisoku.api.evaluation.RuleSelectionPolicy;
 import in.systemhalted.kisoku.runtime.codec.ValueCodec;
 import in.systemhalted.kisoku.runtime.csv.Operator;
 import in.systemhalted.kisoku.runtime.csv.StreamingCsvRowReader;
-import java.io.ByteArrayOutputStream;
+import java.io.BufferedOutputStream;
+import java.io.DataOutputStream;
 import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.List;
 
-/** Compiles CSV decision tables into binary artifacts. */
+/**
+ * Compiles CSV decision tables into binary artifacts, streaming end to end.
+ *
+ * <p>The source is read twice and never held in memory:
+ *
+ * <ol>
+ *   <li><b>Pass 1</b> streams the CSV to collect what encoding needs up front: the string
+ *       dictionary (bounded by distinct values, not rows), per-column decimal scales, the priority
+ *       of every row (one int each), and the row count.
+ *   <li><b>Pass 2</b> streams the CSV again, encoding each cell to its order-preserving code as it
+ *       is read and appending it to a per-column temporary file (in source row order).
+ *   <li><b>Stitch</b> writes the artifact file sequentially: header, dictionary, column
+ *       definitions, then each column's data - loading one column's temporary file at a time,
+ *       permuting its rows into evaluation order in memory, and emitting the column's subsections.
+ * </ol>
+ *
+ * <p>Peak heap is therefore the dictionary, one int per row for priorities, and the largest single
+ * column's encoded data - independent of the table's total size. The artifact is written through a
+ * stream with 64-bit offsets (format 4.0), so it may exceed 2 GB; each individual column's data
+ * must stay under 2 GB, which the per-column loader mapping also requires.
+ */
 public final class CsvRulesetCompiler implements RulesetCompiler {
 
   @Override
@@ -44,81 +68,47 @@ public final class CsvRulesetCompiler implements RulesetCompiler {
     RuleSelectionPolicy ruleSelection = options.ruleSelectionPolicy();
     String priorityColumnName = options.priorityColumn();
 
-    // Parse CSV
-    List<String[]> allRows = new ArrayList<>();
-    String[] headerRow;
-    String[] operatorRow;
+    // ---- Pass 1: headers, dictionary, scales, priorities, row count
+    FirstPass first = firstPass(source, schema, priorityColumnName);
+    List<ColumnInfo> columns = first.columns;
+    int rowCount = first.rowCount;
 
-    try (StreamingCsvRowReader reader = new StreamingCsvRowReader(source.openStream())) {
-      headerRow = reader.readNext();
-      if (headerRow == null) {
-        throw new CompilationException("Missing header row");
-      }
-
-      operatorRow = reader.readNext();
-      if (operatorRow == null) {
-        throw new CompilationException("Missing operator row");
-      }
-
-      String[] dataRow;
-      while ((dataRow = reader.readNext()) != null) {
-        allRows.add(dataRow);
-      }
-    }
-
-    if (allRows.isEmpty()) {
+    if (rowCount == 0) {
       throw new CompilationException("No data rows found");
     }
 
-    // Parse operators
-    Operator[] operators = new Operator[operatorRow.length];
-    for (int i = 0; i < operatorRow.length; i++) {
-      operators[i] = Operator.fromToken(operatorRow[i]);
+    boolean usePriority =
+        first.hasPriority
+            && (ruleSelection == RuleSelectionPolicy.PRIORITY
+                || ruleSelection == RuleSelectionPolicy.AUTO);
+    // evalToSource[d] = source row index of the d-th rule in evaluation order; null = identity.
+    int[] evalToSource = usePriority ? stableArgsortAscending(first.priorities, rowCount) : null;
+
+    // ---- Pass 2: encode cells to per-column temporary files in source order
+    Path tempDir = Files.createTempDirectory("kisoku-compile");
+    Path artifactFile;
+    try {
+      ColumnTotals totals = secondPass(source, columns, first.scales, first.dictionary, tempDir);
+
+      // ---- Stitch: layout, then sequential write
+      artifactFile = Files.createTempFile("kisoku-artifact", ".kbin");
+      artifactFile.toFile().deleteOnExit();
+      stitch(
+          artifactFile,
+          artifactKind,
+          ruleSelection,
+          columns,
+          rowCount,
+          first.dictionary,
+          first.scales,
+          totals,
+          evalToSource,
+          tempDir);
+    } finally {
+      deleteRecursively(tempDir);
     }
 
-    // Build column info and filter TEST_ columns for production
-    List<ColumnInfo> columns = buildColumnInfo(headerRow, operators, schema, artifactKind);
-
-    // Find priority column index if present
-    int priorityIndex = findColumnIndex(headerRow, priorityColumnName);
-    boolean hasPriority = priorityIndex >= 0 && operators[priorityIndex] == Operator.PRIORITY;
-
-    // Build string dictionary and per-column decimal scales (first pass)
-    StringDictionary dictionary = buildDictionary(headerRow, columns, allRows);
-    int[] scales = computeDecimalScales(columns, allRows);
-
-    // Sort rows if using priority
-    List<Integer> ruleOrder = buildRuleOrder(allRows, priorityIndex, hasPriority, ruleSelection);
-
-    // Reorder rows according to rule order
-    List<String[]> orderedRows = new ArrayList<>();
-    for (int idx : ruleOrder) {
-      orderedRows.add(allRows.get(idx));
-    }
-
-    // Encode rule data first so we know each column's byte size, then record the
-    // per-column offset (relative to the rule-data section base) in its definition.
-    EncodedRuleData ruleData = encodeRuleData(columns, orderedRows, dictionary, scales);
-    byte[] columnDefinitionsBytes =
-        encodeColumnDefinitions(columns, dictionary, ruleData.columnOffsets(), scales);
-    byte[] ruleDataBytes = ruleData.bytes();
-    byte[] ruleOrderBytes = encodeRuleOrder(orderedRows.size(), hasPriority, ruleSelection);
-    byte[] dictionaryBytes = dictionary.serialize();
-
-    // Build artifact
-    BinaryArtifactWriter writer = new BinaryArtifactWriter();
-    byte[] artifactBytes =
-        writer.write(
-            artifactKind,
-            ruleSelection,
-            columns.size(),
-            orderedRows.size(),
-            dictionaryBytes,
-            columnDefinitionsBytes,
-            ruleDataBytes,
-            ruleOrderBytes);
-
-    // Build metadata
+    // ---- Metadata
     List<String> inputColumns = new ArrayList<>();
     List<String> outputColumns = new ArrayList<>();
     for (ColumnInfo col : columns) {
@@ -128,45 +118,445 @@ public final class CsvRulesetCompiler implements RulesetCompiler {
         inputColumns.add(col.name);
       }
     }
-
-    String effectivePriorityColumn = hasPriority ? priorityColumnName : null;
+    String effectivePriorityColumn = first.hasPriority ? priorityColumnName : null;
     RulesetMetadata metadata =
         new RulesetMetadata(
-            orderedRows.size(), inputColumns, outputColumns, effectivePriorityColumn, artifactKind);
+            rowCount, inputColumns, outputColumns, effectivePriorityColumn, artifactKind);
 
-    return new CompiledRulesetImpl(artifactKind, metadata, artifactBytes);
+    return new CompiledRulesetImpl(artifactKind, metadata, artifactFile);
   }
 
-  private List<ColumnInfo> buildColumnInfo(
-      String[] headerRow, Operator[] operators, Schema schema, ArtifactKind artifactKind) {
-    List<ColumnInfo> columns = new ArrayList<>();
+  // ------------------------------------------------------------------ pass 1
 
+  /** Everything pass 1 learns about the table. */
+  private static final class FirstPass {
+    List<ColumnInfo> columns;
+    int rowCount;
+    int[] priorities; // per source row; only meaningful when hasPriority
+    boolean hasPriority;
+    int[] scales; // per column
+    StringDictionary dictionary;
+  }
+
+  private FirstPass firstPass(DecisionTableSource source, Schema schema, String priorityColumnName)
+      throws IOException {
+    FirstPass result = new FirstPass();
+    result.dictionary = new StringDictionary();
+
+    try (StreamingCsvRowReader reader = new StreamingCsvRowReader(source.openStream())) {
+      String[] headerRow = reader.readNext();
+      if (headerRow == null) {
+        throw new CompilationException("Missing header row");
+      }
+      String[] operatorRow = reader.readNext();
+      if (operatorRow == null) {
+        throw new CompilationException("Missing operator row");
+      }
+
+      Operator[] operators = new Operator[operatorRow.length];
+      for (int i = 0; i < operatorRow.length; i++) {
+        operators[i] = Operator.fromToken(operatorRow[i]);
+      }
+      result.columns = buildColumnInfo(headerRow, operators, schema);
+
+      // Column names live in the dictionary; definitions reference them by ID.
+      for (ColumnInfo col : result.columns) {
+        result.dictionary.add(col.name);
+      }
+
+      int priorityIndex = findColumnIndex(headerRow, priorityColumnName);
+      result.hasPriority = priorityIndex >= 0 && operators[priorityIndex] == Operator.PRIORITY;
+
+      result.scales = new int[result.columns.size()];
+      int[] priorities = new int[1024];
+      int rows = 0;
+
+      String[] row;
+      while ((row = reader.readNext()) != null) {
+        if (result.hasPriority) {
+          if (rows == priorities.length) {
+            int[] grown = new int[priorities.length * 2];
+            System.arraycopy(priorities, 0, grown, 0, rows);
+            priorities = grown;
+          }
+          priorities[rows] = priorityOf(row, priorityIndex);
+        }
+        collectDictionaryAndScales(row, result.columns, result.scales, result.dictionary);
+        rows++;
+      }
+
+      result.rowCount = rows;
+      result.priorities = priorities;
+    }
+    return result;
+  }
+
+  /** Feeds one row's cells into the dictionary and decimal-scale maxima. */
+  private void collectDictionaryAndScales(
+      String[] row, List<ColumnInfo> columns, int[] scales, StringDictionary dictionary) {
+    for (int c = 0; c < columns.size(); c++) {
+      ColumnInfo col = columns.get(c);
+      String value = cellAt(row, col.originalIndex);
+      if (value.isEmpty()) {
+        continue;
+      }
+
+      if (col.type == ColumnType.DECIMAL) {
+        for (String operand : splitOperands(value)) {
+          try {
+            scales[c] = Math.max(scales[c], ValueCodec.scaleOf(operand));
+          } catch (NumberFormatException e) {
+            throw new CompilationException(
+                "Column '" + col.name + "' is DECIMAL but holds '" + operand + "'", e);
+          }
+        }
+        continue;
+      }
+
+      // Only STRING values are dictionary-encoded; RULE_ID is stored as inline UTF-8, and
+      // DECIMAL/TIMESTAMP as order-preserving numbers.
+      if (col.type != ColumnType.STRING || col.operator == Operator.RULE_ID) {
+        continue;
+      }
+      if (col.operator == Operator.IN || col.operator == Operator.NOT_IN) {
+        for (String operand : splitOperands(value)) {
+          dictionary.add(operand);
+        }
+      } else if (isRangeOperator(col.operator)) {
+        for (String operand : splitOperands(value)) {
+          dictionary.add(operand);
+        }
+      } else {
+        dictionary.add(value.trim());
+      }
+    }
+  }
+
+  // ------------------------------------------------------------------ pass 2
+
+  /** Per-column aggregates pass 2 tracks for layout computation. */
+  private static final class ColumnTotals {
+    long[] setMembers; // total set members per column
+    long[] inlineBytes; // total inline UTF-8 bytes per column
+  }
+
+  /**
+   * Streams the CSV a second time, appending each cell's encoded record to its column's temporary
+   * file in source row order. Record formats (per row, per column):
+   *
+   * <pre>
+   * scalar:  present:1 [code:8]
+   * range:   present:1 [min:8 max:8]
+   * set:     present:1 [count:2 codes:8*count]
+   * ruleid:  present:1 [len:2 utf8-bytes]
+   * </pre>
+   */
+  private ColumnTotals secondPass(
+      DecisionTableSource source,
+      List<ColumnInfo> columns,
+      int[] scales,
+      StringDictionary dictionary,
+      Path tempDir)
+      throws IOException {
+    ColumnTotals totals = new ColumnTotals();
+    totals.setMembers = new long[columns.size()];
+    totals.inlineBytes = new long[columns.size()];
+
+    DataOutputStream[] streams = new DataOutputStream[columns.size()];
+    try {
+      for (int c = 0; c < columns.size(); c++) {
+        streams[c] =
+            new DataOutputStream(
+                new BufferedOutputStream(Files.newOutputStream(columnTemp(tempDir, c)), 1 << 15));
+      }
+
+      try (StreamingCsvRowReader reader = new StreamingCsvRowReader(source.openStream())) {
+        reader.readNext(); // header row (validated in pass 1)
+        reader.readNext(); // operator row
+        String[] row;
+        long rowNumber = 2;
+        while ((row = reader.readNext()) != null) {
+          rowNumber++;
+          try {
+            encodeRow(row, columns, scales, dictionary, streams, totals);
+          } catch (CompilationException e) {
+            throw new CompilationException("Row " + rowNumber + ": " + e.getMessage(), e);
+          }
+        }
+      }
+    } finally {
+      for (DataOutputStream stream : streams) {
+        if (stream != null) {
+          stream.close();
+        }
+      }
+    }
+    return totals;
+  }
+
+  private void encodeRow(
+      String[] row,
+      List<ColumnInfo> columns,
+      int[] scales,
+      StringDictionary dictionary,
+      DataOutputStream[] streams,
+      ColumnTotals totals)
+      throws IOException {
+    for (int c = 0; c < columns.size(); c++) {
+      ColumnInfo col = columns.get(c);
+      DataOutputStream out = streams[c];
+      String value = cellAt(row, col.originalIndex);
+
+      if (value.isEmpty()) {
+        out.writeByte(0);
+        continue;
+      }
+      out.writeByte(1);
+
+      if (col.operator == Operator.RULE_ID) {
+        byte[] bytes = value.trim().getBytes(StandardCharsets.UTF_8);
+        if (bytes.length > 0xFFFF) {
+          throw new CompilationException("RULE_ID exceeds 65535 UTF-8 bytes");
+        }
+        out.writeShort(bytes.length);
+        out.write(bytes);
+        totals.inlineBytes[c] += bytes.length;
+      } else if (col.operator == Operator.IN || col.operator == Operator.NOT_IN) {
+        long[] codes = CellEncoder.setCodes(value, col.type, scales[c], dictionary);
+        out.writeShort(codes.length);
+        for (long code : codes) {
+          out.writeLong(code);
+        }
+        totals.setMembers[c] += codes.length;
+      } else if (isRangeOperator(col.operator)) {
+        long[] range = CellEncoder.rangeCodes(value, col.type, scales[c], dictionary);
+        out.writeLong(range[0]);
+        out.writeLong(range[1]);
+      } else {
+        out.writeLong(CellEncoder.scalarCode(value.trim(), col.type, scales[c], dictionary));
+      }
+    }
+  }
+
+  // ------------------------------------------------------------------ stitch
+
+  private void stitch(
+      Path artifactFile,
+      ArtifactKind artifactKind,
+      RuleSelectionPolicy ruleSelection,
+      List<ColumnInfo> columns,
+      int rowCount,
+      StringDictionary dictionary,
+      int[] scales,
+      ColumnTotals totals,
+      int[] evalToSource,
+      Path tempDir)
+      throws IOException {
+    byte[] dictionaryBytes = dictionary.serialize();
+
+    // Layout: every section size is known before anything is written.
+    int bitmapSize = (rowCount + 7) / 8;
+    long[] columnOffsets = new long[columns.size()]; // relative to the data section
+    long dataSize = 0;
+    for (int c = 0; c < columns.size(); c++) {
+      columnOffsets[c] = dataSize;
+      long size = columnSize(columns.get(c), rowCount, bitmapSize, totals, c);
+      if (size > Integer.MAX_VALUE) {
+        throw new CompilationException(
+            "Column '"
+                + columns.get(c).name
+                + "' data is "
+                + size
+                + " bytes; the per-column"
+                + " limit is 2GB");
+      }
+      dataSize += size;
+    }
+
+    long dictionaryOffset = BinaryArtifactWriter.HEADER_SIZE;
+    long columnsOffset = dictionaryOffset + dictionaryBytes.length;
+    long dataOffset =
+        columnsOffset + (long) columns.size() * BinaryArtifactWriter.COLUMN_DEFINITION_SIZE;
+    long ruleOrderOffset = dataOffset + dataSize;
+
+    try (DataOutputStream dos =
+        new DataOutputStream(
+            new BufferedOutputStream(Files.newOutputStream(artifactFile), 1 << 16))) {
+      BinaryArtifactWriter.writeHeader(
+          dos,
+          artifactKind,
+          ruleSelection,
+          columns.size(),
+          rowCount,
+          dictionaryOffset,
+          columnsOffset,
+          dataOffset,
+          ruleOrderOffset);
+      dos.write(dictionaryBytes);
+
+      for (int c = 0; c < columns.size(); c++) {
+        ColumnInfo col = columns.get(c);
+        BinaryArtifactWriter.writeColumnDefinition(
+            dos,
+            dictionary.getId(col.name),
+            col.operator.ordinal(),
+            col.type.ordinal(),
+            resolveColumnRole(col.operator),
+            col.isTestColumn ? 0x02 : 0x00,
+            columnOffsets[c],
+            scales[c]);
+      }
+
+      for (int c = 0; c < columns.size(); c++) {
+        writeColumn(dos, columns.get(c), c, rowCount, bitmapSize, evalToSource, tempDir);
+        Files.delete(columnTemp(tempDir, c)); // free disk as we go
+      }
+
+      // Rows are physically stored in evaluation order, so the order is the identity.
+      dos.writeByte(BinaryArtifactWriter.RULE_ORDER_IDENTITY);
+    }
+  }
+
+  /** Artifact byte size of one column's data section. */
+  private long columnSize(
+      ColumnInfo col, int rowCount, int bitmapSize, ColumnTotals totals, int c) {
+    if (col.operator == Operator.RULE_ID) {
+      return bitmapSize + 4L * (rowCount + 1) + totals.inlineBytes[c];
+    }
+    if (col.operator == Operator.IN || col.operator == Operator.NOT_IN) {
+      return bitmapSize + 4L * rowCount + 2L * rowCount + 8L * totals.setMembers[c];
+    }
+    if (isRangeOperator(col.operator)) {
+      return bitmapSize + 16L * rowCount;
+    }
+    return bitmapSize + 8L * rowCount;
+  }
+
+  /**
+   * Emits one column's artifact data: loads the column's temporary file, indexes its per-row
+   * records, and writes each subsection by iterating rows in evaluation order.
+   */
+  private void writeColumn(
+      DataOutputStream dos,
+      ColumnInfo col,
+      int c,
+      int rowCount,
+      int bitmapSize,
+      int[] evalToSource,
+      Path tempDir)
+      throws IOException {
+    byte[] temp = Files.readAllBytes(columnTemp(tempDir, c));
+    ByteBuffer buf = ByteBuffer.wrap(temp);
+
+    // Index record starts (records are self-describing).
+    int[] recStart = new int[rowCount];
+    int pos = 0;
+    for (int r = 0; r < rowCount; r++) {
+      recStart[r] = pos;
+      boolean present = temp[pos] == 1;
+      pos += 1;
+      if (!present) {
+        continue;
+      }
+      if (col.operator == Operator.RULE_ID) {
+        pos += 2 + (buf.getShort(pos) & 0xFFFF);
+      } else if (col.operator == Operator.IN || col.operator == Operator.NOT_IN) {
+        pos += 2 + 8 * (buf.getShort(pos) & 0xFFFF);
+      } else if (isRangeOperator(col.operator)) {
+        pos += 16;
+      } else {
+        pos += 8;
+      }
+    }
+
+    // Presence bitmap (MSB-first), in evaluation order.
+    byte[] bitmap = new byte[bitmapSize];
+    for (int d = 0; d < rowCount; d++) {
+      int src = evalToSource != null ? evalToSource[d] : d;
+      if (temp[recStart[src]] == 1) {
+        bitmap[d / 8] |= (byte) (1 << (7 - (d % 8)));
+      }
+    }
+    dos.write(bitmap);
+
+    if (col.operator == Operator.RULE_ID) {
+      long running = 0;
+      for (int d = 0; d < rowCount; d++) {
+        int src = evalToSource != null ? evalToSource[d] : d;
+        dos.writeInt((int) running);
+        if (temp[recStart[src]] == 1) {
+          running += buf.getShort(recStart[src] + 1) & 0xFFFF;
+        }
+      }
+      dos.writeInt((int) running); // blob size
+      for (int d = 0; d < rowCount; d++) {
+        int src = evalToSource != null ? evalToSource[d] : d;
+        if (temp[recStart[src]] == 1) {
+          int len = buf.getShort(recStart[src] + 1) & 0xFFFF;
+          dos.write(temp, recStart[src] + 3, len);
+        }
+      }
+    } else if (col.operator == Operator.IN || col.operator == Operator.NOT_IN) {
+      int running = 0;
+      for (int d = 0; d < rowCount; d++) { // list_offsets
+        int src = evalToSource != null ? evalToSource[d] : d;
+        dos.writeInt(running);
+        if (temp[recStart[src]] == 1) {
+          running += buf.getShort(recStart[src] + 1) & 0xFFFF;
+        }
+      }
+      for (int d = 0; d < rowCount; d++) { // list_lengths
+        int src = evalToSource != null ? evalToSource[d] : d;
+        dos.writeShort(temp[recStart[src]] == 1 ? buf.getShort(recStart[src] + 1) : 0);
+      }
+      for (int d = 0; d < rowCount; d++) { // all_values
+        int src = evalToSource != null ? evalToSource[d] : d;
+        if (temp[recStart[src]] == 1) {
+          int count = buf.getShort(recStart[src] + 1) & 0xFFFF;
+          for (int i = 0; i < count; i++) {
+            dos.writeLong(buf.getLong(recStart[src] + 3 + i * 8));
+          }
+        }
+      }
+    } else if (isRangeOperator(col.operator)) {
+      for (int d = 0; d < rowCount; d++) { // min_values
+        int src = evalToSource != null ? evalToSource[d] : d;
+        dos.writeLong(temp[recStart[src]] == 1 ? buf.getLong(recStart[src] + 1) : 0L);
+      }
+      for (int d = 0; d < rowCount; d++) { // max_values
+        int src = evalToSource != null ? evalToSource[d] : d;
+        dos.writeLong(temp[recStart[src]] == 1 ? buf.getLong(recStart[src] + 9) : 0L);
+      }
+    } else {
+      for (int d = 0; d < rowCount; d++) { // values
+        int src = evalToSource != null ? evalToSource[d] : d;
+        dos.writeLong(temp[recStart[src]] == 1 ? buf.getLong(recStart[src] + 1) : 0L);
+      }
+    }
+  }
+
+  // ----------------------------------------------------------------- shared
+
+  private List<ColumnInfo> buildColumnInfo(
+      String[] headerRow, Operator[] operators, Schema schema) {
+    List<ColumnInfo> columns = new ArrayList<>();
     for (int i = 0; i < headerRow.length; i++) {
       String name = headerRow[i];
       Operator operator = operators[i];
-
-      // Mark TEST_ columns but include in all artifacts (flagged for evaluation-time control)
       boolean isTestColumn = name.startsWith("TEST_");
-
       ColumnType type = resolveColumnType(name, operator, schema);
-      int role = resolveColumnRole(operator);
-
-      columns.add(new ColumnInfo(i, name, operator, type, role, isTestColumn));
+      columns.add(new ColumnInfo(i, name, operator, type, isTestColumn));
     }
-
     return columns;
   }
 
   private ColumnType resolveColumnType(String name, Operator operator, Schema schema) {
-    // Reserved columns have implicit types
     if (operator == Operator.RULE_ID) {
       return ColumnType.STRING;
     }
     if (operator == Operator.PRIORITY) {
       return ColumnType.INTEGER;
     }
-
-    // Look up in schema
     return schema
         .column(name)
         .map(ColumnSchema::type)
@@ -192,107 +582,57 @@ public final class CsvRulesetCompiler implements RulesetCompiler {
     return -1;
   }
 
-  private StringDictionary buildDictionary(
-      String[] headerRow, List<ColumnInfo> columns, List<String[]> rows) {
-    StringDictionary dictionary = new StringDictionary();
-
-    // Add column names
-    for (ColumnInfo col : columns) {
-      dictionary.add(col.name);
+  /** Reads a row's priority; an absent or blank value ranks last. */
+  private int priorityOf(String[] row, int priorityIndex) {
+    if (priorityIndex >= row.length) {
+      return Integer.MAX_VALUE;
     }
-
-    // Add all string values from data rows
-    for (String[] row : rows) {
-      for (ColumnInfo col : columns) {
-        if (col.originalIndex >= row.length) {
-          continue;
-        }
-        String value = row[col.originalIndex];
-        if (value == null || value.isEmpty()) {
-          continue;
-        }
-
-        // Only STRING values are dictionary-encoded. DECIMAL and TIMESTAMP are stored as
-        // order-preserving numbers, and RULE_ID as inline UTF-8 - RULE_ID is unique per row, so
-        // dictionary-encoding it would make the dictionary linear in the row count.
-        if (col.type != ColumnType.STRING || col.operator == Operator.RULE_ID) {
-          continue;
-        }
-
-        if (col.operator == Operator.IN || col.operator == Operator.NOT_IN) {
-          addSetValuesToDictionary(value, dictionary);
-        } else if (isRangeOperator(col.operator)) {
-          addRangeValuesToDictionary(value, dictionary);
-        } else {
-          dictionary.add(value.trim());
-        }
-      }
+    String value = row[priorityIndex];
+    if (value == null || value.isBlank()) {
+      return Integer.MAX_VALUE;
     }
-
-    return dictionary;
-  }
-
-  private void addSetValuesToDictionary(String value, StringDictionary dictionary) {
-    if (!value.startsWith("(") || !value.endsWith(")")) {
-      return;
-    }
-    String inner = value.substring(1, value.length() - 1);
-    if (inner.isEmpty()) {
-      return;
-    }
-    for (String part : inner.split(",")) {
-      dictionary.add(part.trim());
-    }
-  }
-
-  private void addRangeValuesToDictionary(String value, StringDictionary dictionary) {
-    if (!value.startsWith("(") || !value.endsWith(")")) {
-      return;
-    }
-    String inner = value.substring(1, value.length() - 1);
-    String[] parts = inner.split(",", 2);
-    if (parts.length == 2) {
-      dictionary.add(parts[0].trim());
-      dictionary.add(parts[1].trim());
+    try {
+      return Integer.parseInt(value.trim());
+    } catch (NumberFormatException e) {
+      throw new CompilationException("PRIORITY value '" + value + "' is not an integer", e);
     }
   }
 
   /**
-   * Determines each DECIMAL column's storage scale as the widest scale that appears in it, so every
-   * cell in the column is representable exactly. Non-DECIMAL columns get 0.
+   * Stable ascending argsort of the first {@code count} priorities: a lower value means a higher
+   * priority, and ties keep source order.
    *
-   * @param columns the column definitions
-   * @param rows all data rows
-   * @return per-column scale, positionally aligned with {@code columns}
+   * @return evalToSource: entry d is the source row of the d-th rule in evaluation order
    */
-  private int[] computeDecimalScales(List<ColumnInfo> columns, List<String[]> rows) {
-    int[] scales = new int[columns.size()];
-    for (int c = 0; c < columns.size(); c++) {
-      ColumnInfo col = columns.get(c);
-      if (col.type != ColumnType.DECIMAL) {
-        continue;
-      }
-      int scale = 0;
-      for (String[] row : rows) {
-        if (col.originalIndex >= row.length) {
-          continue;
-        }
-        String value = row[col.originalIndex];
-        if (value == null || value.isEmpty()) {
-          continue;
-        }
-        for (String operand : splitOperands(value)) {
-          try {
-            scale = Math.max(scale, ValueCodec.scaleOf(operand));
-          } catch (NumberFormatException e) {
-            throw new CompilationException(
-                "Column '" + col.name + "' is DECIMAL but holds '" + operand + "'", e);
-          }
-        }
-      }
-      scales[c] = scale;
+  private static int[] stableArgsortAscending(int[] keys, int count) {
+    int[] order = new int[count];
+    for (int i = 0; i < count; i++) {
+      order[i] = i;
     }
-    return scales;
+    int[] tmp = new int[count];
+    for (int width = 1; width < count; width *= 2) {
+      for (int lo = 0; lo < count - width; lo += 2 * width) {
+        int mid = lo + width;
+        int hi = Math.min(lo + 2 * width, count);
+        if (keys[order[mid - 1]] <= keys[order[mid]]) {
+          continue;
+        }
+        int i = lo;
+        int j = mid;
+        int k = lo;
+        while (i < mid && j < hi) {
+          tmp[k++] = keys[order[i]] <= keys[order[j]] ? order[i++] : order[j++];
+        }
+        while (i < mid) {
+          tmp[k++] = order[i++];
+        }
+        while (j < hi) {
+          tmp[k++] = order[j++];
+        }
+        System.arraycopy(tmp, lo, order, lo, hi - lo);
+      }
+    }
+    return order;
   }
 
   /** Splits a cell into its operands: a bare scalar, or the members of a {@code (a,b,c)} cell. */
@@ -321,162 +661,35 @@ public final class CsvRulesetCompiler implements RulesetCompiler {
         || op == Operator.NOT_BETWEEN_EXCLUSIVE;
   }
 
-  /**
-   * Orders rows for evaluation.
-   *
-   * <p>A <em>lower</em> PRIORITY value means a higher priority, so rows sort ascending: priority 1
-   * is considered before priority 2. Ties keep their source order, since the sort is stable. A row
-   * with no priority value sorts last, so an unnumbered rule can never pre-empt a numbered one.
-   *
-   * @param rows all data rows
-   * @param priorityIndex column index of the priority column, or -1
-   * @param hasPriority whether a usable PRIORITY column is present
-   * @param policy the configured rule selection policy
-   * @return source row indices in evaluation order
-   */
-  private List<Integer> buildRuleOrder(
-      List<String[]> rows, int priorityIndex, boolean hasPriority, RuleSelectionPolicy policy) {
-    List<Integer> order = new ArrayList<>();
-    for (int i = 0; i < rows.size(); i++) {
-      order.add(i);
+  private static String cellAt(String[] row, int index) {
+    if (index >= row.length || row[index] == null) {
+      return "";
     }
-
-    // Sort by priority if applicable
-    boolean usePriority =
-        hasPriority
-            && (policy == RuleSelectionPolicy.PRIORITY || policy == RuleSelectionPolicy.AUTO);
-
-    if (usePriority) {
-      // Extract the key once per row rather than re-parsing it on every comparison.
-      int[] priorities = new int[rows.size()];
-      for (int i = 0; i < rows.size(); i++) {
-        priorities[i] = priorityOf(rows.get(i), priorityIndex);
-      }
-      order.sort(Comparator.comparingInt((Integer i) -> priorities[i]));
-    }
-
-    return order;
+    return row[index];
   }
 
-  /** Reads a row's priority; an absent or blank value ranks last. */
-  private int priorityOf(String[] row, int priorityIndex) {
-    if (priorityIndex >= row.length) {
-      return Integer.MAX_VALUE;
-    }
-    String value = row[priorityIndex];
-    if (value == null || value.isBlank()) {
-      return Integer.MAX_VALUE;
-    }
-    try {
-      return Integer.parseInt(value.trim());
-    } catch (NumberFormatException e) {
-      throw new CompilationException("PRIORITY value '" + value + "' is not an integer", e);
-    }
+  private static Path columnTemp(Path tempDir, int column) {
+    return tempDir.resolve("col-" + column + ".tmp");
   }
 
-  private byte[] encodeColumnDefinitions(
-      List<ColumnInfo> columns, StringDictionary dictionary, int[] columnOffsets, int[] scales) {
-    ByteArrayOutputStream baos = new ByteArrayOutputStream();
-
-    for (int c = 0; c < columns.size(); c++) {
-      ColumnInfo col = columns.get(c);
-      int nameId = dictionary.getId(col.name);
-      int operatorOrdinal = col.operator.ordinal();
-      int typeOrdinal = col.type.ordinal();
-      int flags = col.isTestColumn ? 0x02 : 0x00;
-
-      byte[] colDef =
-          BinaryArtifactWriter.writeColumnDefinition(
-              nameId, operatorOrdinal, typeOrdinal, col.role, flags, columnOffsets[c], scales[c]);
-      try {
-        baos.write(colDef);
-      } catch (IOException e) {
-        throw new CompilationException("Failed to write column definition", e);
-      }
+  private static void deleteRecursively(Path dir) {
+    try (var paths = Files.walk(dir)) {
+      paths
+          .sorted((a, b) -> b.getNameCount() - a.getNameCount())
+          .forEach(
+              p -> {
+                try {
+                  Files.deleteIfExists(p);
+                } catch (IOException e) {
+                  // Best-effort temp cleanup.
+                }
+              });
+    } catch (IOException e) {
+      // Best-effort temp cleanup.
     }
-
-    return baos.toByteArray();
-  }
-
-  /** Encoded rule-data section plus each column's byte offset relative to the section base. */
-  private record EncodedRuleData(byte[] bytes, int[] columnOffsets) {}
-
-  private EncodedRuleData encodeRuleData(
-      List<ColumnInfo> columns, List<String[]> rows, StringDictionary dictionary, int[] scales) {
-    ByteArrayOutputStream baos = new ByteArrayOutputStream();
-    int[] columnOffsets = new int[columns.size()];
-
-    // Project rows to only include columns we're encoding
-    List<String[]> projectedRows = new ArrayList<>();
-    for (String[] row : rows) {
-      String[] projected = new String[columns.size()];
-      for (int c = 0; c < columns.size(); c++) {
-        ColumnInfo col = columns.get(c);
-        projected[c] = col.originalIndex < row.length ? row[col.originalIndex] : "";
-      }
-      projectedRows.add(projected);
-    }
-
-    int offset = 0;
-    for (int c = 0; c < columns.size(); c++) {
-      ColumnInfo col = columns.get(c);
-      columnOffsets[c] = offset;
-      ColumnEncoder encoder = createEncoder(col.operator, dictionary, col.type, scales[c]);
-      byte[] encoded = encoder.encode(projectedRows, c);
-      try {
-        baos.write(encoded);
-      } catch (IOException e) {
-        throw new CompilationException("Failed to encode column: " + col.name, e);
-      }
-      offset += encoded.length;
-    }
-
-    return new EncodedRuleData(baos.toByteArray(), columnOffsets);
-  }
-
-  private ColumnEncoder createEncoder(
-      Operator operator, StringDictionary dictionary, ColumnType type, int scale) {
-    return switch (operator) {
-      case RULE_ID -> new InlineStringColumnEncoder(dictionary, type);
-      case IN, NOT_IN -> new SetColumnEncoder(dictionary, type, scale);
-      case BETWEEN_INCLUSIVE, BETWEEN_EXCLUSIVE, NOT_BETWEEN_INCLUSIVE, NOT_BETWEEN_EXCLUSIVE ->
-          new RangeColumnEncoder(dictionary, type, scale);
-      default -> new ScalarColumnEncoder(dictionary, type, scale);
-    };
-  }
-
-  /**
-   * Encodes the evaluation order over <em>physical</em> row positions.
-   *
-   * <p>Rows are already written to the artifact in evaluation order (see {@code orderedRows}), so
-   * the stored sequence is the identity permutation. Writing the source-row permutation here would
-   * apply the ordering twice at evaluation time, because the loader treats each stored entry as a
-   * physical row index.
-   *
-   * @param rowCount number of rows written to the artifact
-   * @param hasPriority whether a usable PRIORITY column is present
-   * @param policy the configured rule selection policy
-   * @return the encoded rule order section
-   */
-  private byte[] encodeRuleOrder(int rowCount, boolean hasPriority, RuleSelectionPolicy policy) {
-    int orderType =
-        (hasPriority
-                && (policy == RuleSelectionPolicy.PRIORITY || policy == RuleSelectionPolicy.AUTO))
-            ? 1
-            : 0;
-    List<Integer> physicalOrder = new ArrayList<>(rowCount);
-    for (int i = 0; i < rowCount; i++) {
-      physicalOrder.add(i);
-    }
-    return BinaryArtifactWriter.writeRuleOrderIndex(orderType, physicalOrder);
   }
 
   /** Internal column metadata during compilation. */
   private record ColumnInfo(
-      int originalIndex,
-      String name,
-      Operator operator,
-      ColumnType type,
-      int role,
-      boolean isTestColumn) {}
+      int originalIndex, String name, Operator operator, ColumnType type, boolean isTestColumn) {}
 }

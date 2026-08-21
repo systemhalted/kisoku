@@ -27,21 +27,26 @@ A compiled artifact is a self-contained binary file that contains:
 └─────────────────────────────────────────┘
 ```
 
-## Header (32 bytes)
+## Header (64 bytes)
+
+All section offsets are 64-bit, so the artifact as a whole may exceed 2 GB. Each individual
+column's data must stay under 2 GB — the loader maps every column as its own buffer.
 
 | Offset | Size | Field | Description |
 |--------|------|-------|-------------|
 | 0 | 4 | magic | Magic bytes: `0x4B495353` ("KISS") |
-| 4 | 2 | version_major | Format major version (currently 3) |
+| 4 | 2 | version_major | Format major version (currently 4) |
 | 6 | 2 | version_minor | Format minor version (currently 0) |
 | 8 | 1 | artifact_kind | 0 = PRODUCTION, 1 = TEST_INCLUSIVE |
 | 9 | 1 | rule_selection | 0 = AUTO, 1 = PRIORITY, 2 = FIRST_MATCH |
 | 10 | 2 | reserved | Reserved for future use |
 | 12 | 4 | column_count | Number of columns |
 | 16 | 4 | row_count | Number of rules (rows) |
-| 20 | 4 | dictionary_offset | Byte offset to string dictionary |
-| 24 | 4 | columns_offset | Byte offset to column definitions |
-| 28 | 4 | data_offset | Byte offset to rule data |
+| 20 | 8 | dictionary_offset | Byte offset to string dictionary |
+| 28 | 8 | columns_offset | Byte offset to column definitions |
+| 36 | 8 | data_offset | Byte offset to rule data |
+| 44 | 8 | rule_order_offset | Byte offset to the rule order section |
+| 52 | 12 | reserved | Reserved for future use (zero) |
 
 ## String Dictionary
 
@@ -73,7 +78,7 @@ Each column is defined with its metadata:
 └─────────────────────────────────────────┘
 ```
 
-Each column definition (16 bytes):
+Each column definition (24 bytes):
 
 | Size | Field | Description |
 |------|-------|-------------|
@@ -82,8 +87,13 @@ Each column definition (16 bytes):
 | 1 | column_type | Type enum ordinal |
 | 1 | column_role | 0 = INPUT, 1 = OUTPUT, 2 = METADATA |
 | 1 | flags | Bit flags (see below) |
-| 4 | data_offset | Byte offset of this column's data, relative to the rule data section base |
+| 8 | data_offset | Byte offset of this column's data, relative to the rule data section base |
 | 4 | scale | Decimal scale for `DECIMAL` columns (the number of fractional digits every value in the column is stored at); 0 for all other types |
+| 4 | reserved | Reserved for future use (zero) |
+
+Definitions are written in data order: a column's data ends where the next column's begins
+(the last column ends at `rule_order_offset`), which is how the loader sizes each column's
+mapping without scanning its contents.
 
 ### Column Flags
 
@@ -216,35 +226,42 @@ Because ranks come from the *sorted* dictionary, the loader resolves a string in
 search over the dictionary entries rather than by keeping a hash map of every value on the
 heap.
 
-## Rule Order Index
-
-For deterministic evaluation, rules are stored in priority or insertion order:
+## Rule Order Section
 
 ```
 ┌─────────────────────────────────────────┐
 │ order_type (1 byte)                     │
-│ rule_indices[row_count] (4 bytes each)  │
+│ rule_indices[row_count] (4 bytes each,  │
+│   present only when order_type = 1)     │
 └─────────────────────────────────────────┘
 ```
 
-- `order_type`: 0 = insertion order, 1 = priority order
-- `rule_indices`: Row indices in evaluation order
+- `order_type` 0: rows are stored in evaluation order (the identity permutation); nothing
+  follows. This is what the compiler always writes — rows are physically reordered at
+  compile time, so no per-row array is needed and the loader holds no order on the heap.
+- `order_type` 1: an explicit evaluation order over physical rows follows. Reserved for
+  artifacts whose rows are not pre-sorted; the loader honors it via the order-faithful
+  linear-scan path.
 
-If `rule_selection = PRIORITY`, rules are pre-sorted by priority value **ascending** — a lower
+If `rule_selection = PRIORITY`, rows are pre-sorted by priority value **ascending** — a lower
 value means a higher priority, so `PRIORITY` 1 is evaluated before 2 — with ties broken by
-source order and unnumbered rows sorted last. If `rule_selection = FIRST_MATCH`, rules are in original CSV row order.
-
-Rows are written to the rule data section **already in evaluation order**, so `rule_indices`
-is the identity permutation over physical rows. It must not hold the source-row permutation:
-the loader treats each entry as a physical row index, so storing the permutation as well would
-apply the ordering twice.
+source order and unnumbered rows sorted last. If `rule_selection = FIRST_MATCH`, rows are in
+original CSV row order.
 
 ## Versioning
 
 - **Major version change**: Breaking format change, old loaders cannot read new artifacts
 - **Minor version change**: Backward-compatible additions, old loaders can read new artifacts
 
-Current version: 3.0
+Current version: 4.0
+
+- **4.0**: All section offsets (header fields and per-column `data_offset`) are 64-bit and the
+  header carries an explicit `rule_order_offset`, so artifacts may exceed 2 GB; each single
+  column's data stays under 2 GB and the loader maps columns individually. Column definitions
+  grew from 16 to 24 bytes; the header from 32 to 64. The rule-order section stores a 1-byte
+  order type, with type 0 (identity) carrying no array. The compiler is streaming: two passes
+  over the source plus a per-column stitch, so compile heap no longer scales with the table.
+  **Not readable by 3.x** — recompile the artifact.
 
 - **3.0**: The `RULE_ID` column is stored as inline UTF-8 (presence bitmap, byte offsets,
   blob) instead of dictionary codes. Rule ids are unique per row, so this removes the
@@ -270,7 +287,7 @@ R2,21,0.15
 ```
 
 Would produce:
-1. Header: magic=KISS, version=3.0, columns=3, rows=2
+1. Header: magic=KISS, version=4.0, columns=3, rows=2
 2. Dictionary: ["R1", "R2", "0.10", "0.15"]
 3. Column defs: RULE_ID (RULE_ID, STRING), AGE (GTE, INTEGER), DISCOUNT (SET, DECIMAL)
 4. Rule data:

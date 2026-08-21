@@ -2,111 +2,98 @@ package in.systemhalted.kisoku.runtime.compiler;
 
 import in.systemhalted.kisoku.api.ArtifactKind;
 import in.systemhalted.kisoku.api.evaluation.RuleSelectionPolicy;
-import java.io.ByteArrayOutputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
-import java.util.List;
 
 /**
- * Writes the compiled ruleset binary artifact format.
+ * Layout authority for the binary artifact format, written as a stream.
  *
- * <p>Format layout:
+ * <p>Format layout (all offsets 64-bit, so artifacts may exceed 2 GB):
  *
  * <pre>
- * Header (32 bytes)
+ * Header (64 bytes)
  * String Dictionary
- * Column Definitions
- * Rule Data (columnar)
- * Rule Order Index
+ * Column Definitions (24 bytes each)
+ * Rule Data (columnar; per-column data must each stay under 2 GB)
+ * Rule Order (1-byte order_type; 0 = identity, nothing follows)
  * </pre>
+ *
+ * <p>The writer emits sections sequentially to a {@link DataOutputStream} - nothing is buffered
+ * whole - so compilation memory does not scale with the artifact. All section offsets are computed
+ * up front from known sizes and written into the header first.
  */
 final class BinaryArtifactWriter {
   /** Magic bytes: "KISS" (0x4B495353) */
   static final int MAGIC = 0x4B495353;
 
   /**
-   * Major version 3 stores the RULE_ID column as inline UTF-8 (presence bitmap, byte offsets, blob)
-   * instead of dictionary codes, so rule ids - unique per row by design - no longer enter the
-   * dictionary or the loader's heap. Version 2 introduced order-preserving 64-bit value codes,
-   * sorted dictionary entries, and per-column decimal scales. Neither layout is readable by earlier
-   * majors.
+   * Major version 4 moves every section offset (header fields and per-column {@code data_offset})
+   * to 64 bits and adds an explicit {@code rule_order_offset}, so artifacts can exceed 2 GB. Column
+   * definitions grew from 16 to 24 bytes. The rule-order section stores a 1-byte order type; 0
+   * means identity with no array following. Not readable by earlier majors.
    */
-  static final short VERSION_MAJOR = 3;
+  static final short VERSION_MAJOR = 4;
 
   static final short VERSION_MINOR = 0;
 
-  private static final int HEADER_SIZE = 32;
+  static final int HEADER_SIZE = 64;
 
   /** Serialized size of one column definition. */
-  static final int COLUMN_DEFINITION_SIZE = 16;
+  static final int COLUMN_DEFINITION_SIZE = 24;
+
+  /** Rule-order type: rows are stored in evaluation order; no explicit array follows. */
+  static final int RULE_ORDER_IDENTITY = 0;
+
+  /** Rule-order type: an explicit int[row_count] evaluation order follows. */
+  static final int RULE_ORDER_EXPLICIT = 1;
+
+  private BinaryArtifactWriter() {}
 
   /**
-   * Writes the complete binary artifact.
+   * Writes the 64-byte header.
    *
+   * @param dos the artifact stream, positioned at 0
    * @param artifactKind PRODUCTION or TEST_INCLUSIVE
-   * @param ruleSelectionPolicy rule selection mode
+   * @param ruleSelection rule selection mode
    * @param columnCount number of columns
    * @param rowCount number of rules
-   * @param dictionaryBytes serialized string dictionary
-   * @param columnDefinitionsBytes serialized column definitions
-   * @param ruleDataBytes columnar encoded rule data
-   * @param ruleOrderBytes rule order index
-   * @return the complete binary artifact
+   * @param dictionaryOffset byte offset of the dictionary section
+   * @param columnsOffset byte offset of the column definitions section
+   * @param dataOffset byte offset of the rule data section
+   * @param ruleOrderOffset byte offset of the rule order section
+   * @throws IOException if the stream fails
    */
-  byte[] write(
+  static void writeHeader(
+      DataOutputStream dos,
       ArtifactKind artifactKind,
-      RuleSelectionPolicy ruleSelectionPolicy,
+      RuleSelectionPolicy ruleSelection,
       int columnCount,
       int rowCount,
-      byte[] dictionaryBytes,
-      byte[] columnDefinitionsBytes,
-      byte[] ruleDataBytes,
-      byte[] ruleOrderBytes) {
-
-    // Calculate offsets
-    int dictionaryOffset = HEADER_SIZE;
-    int columnsOffset = dictionaryOffset + dictionaryBytes.length;
-    int dataOffset = columnsOffset + columnDefinitionsBytes.length;
-
-    try {
-      ByteArrayOutputStream baos = new ByteArrayOutputStream();
-      DataOutputStream dos = new DataOutputStream(baos);
-
-      // Header (32 bytes)
-      dos.writeInt(MAGIC); // 0-3: magic
-      dos.writeShort(VERSION_MAJOR); // 4-5: version_major
-      dos.writeShort(VERSION_MINOR); // 6-7: version_minor
-      dos.writeByte(artifactKindOrdinal(artifactKind)); // 8: artifact_kind
-      dos.writeByte(ruleSelectionOrdinal(ruleSelectionPolicy)); // 9: rule_selection
-      dos.writeShort(0); // 10-11: reserved
-      dos.writeInt(columnCount); // 12-15: column_count
-      dos.writeInt(rowCount); // 16-19: row_count
-      dos.writeInt(dictionaryOffset); // 20-23: dictionary_offset
-      dos.writeInt(columnsOffset); // 24-27: columns_offset
-      dos.writeInt(dataOffset); // 28-31: data_offset
-
-      // String Dictionary
-      dos.write(dictionaryBytes);
-
-      // Column Definitions
-      dos.write(columnDefinitionsBytes);
-
-      // Rule Data
-      dos.write(ruleDataBytes);
-
-      // Rule Order Index
-      dos.write(ruleOrderBytes);
-
-      dos.flush();
-      return baos.toByteArray();
-    } catch (IOException e) {
-      throw new IllegalStateException("Failed to write artifact", e);
-    }
+      long dictionaryOffset,
+      long columnsOffset,
+      long dataOffset,
+      long ruleOrderOffset)
+      throws IOException {
+    dos.writeInt(MAGIC); // 0-3: magic
+    dos.writeShort(VERSION_MAJOR); // 4-5: version_major
+    dos.writeShort(VERSION_MINOR); // 6-7: version_minor
+    dos.writeByte(artifactKindOrdinal(artifactKind)); // 8: artifact_kind
+    dos.writeByte(ruleSelectionOrdinal(ruleSelection)); // 9: rule_selection
+    dos.writeShort(0); // 10-11: reserved
+    dos.writeInt(columnCount); // 12-15: column_count
+    dos.writeInt(rowCount); // 16-19: row_count
+    dos.writeLong(dictionaryOffset); // 20-27: dictionary_offset
+    dos.writeLong(columnsOffset); // 28-35: columns_offset
+    dos.writeLong(dataOffset); // 36-43: data_offset
+    dos.writeLong(ruleOrderOffset); // 44-51: rule_order_offset
+    dos.writeInt(0); // 52-55: reserved
+    dos.writeLong(0L); // 56-63: reserved
   }
 
   /**
-   * Writes a single column definition.
+   * Writes a single column definition (24 bytes).
    *
+   * @param dos the artifact stream
    * @param nameId dictionary ID of column name
    * @param operatorOrdinal operator enum ordinal
    * @param typeOrdinal column type ordinal
@@ -114,57 +101,26 @@ final class BinaryArtifactWriter {
    * @param flags bit flags (0x01=nullable, 0x02=test-only)
    * @param dataOffset byte offset within rule data section
    * @param scale decimal scale for DECIMAL columns, 0 otherwise
-   * @return serialized column definition (16 bytes)
+   * @throws IOException if the stream fails
    */
-  static byte[] writeColumnDefinition(
+  static void writeColumnDefinition(
+      DataOutputStream dos,
       int nameId,
       int operatorOrdinal,
       int typeOrdinal,
       int roleOrdinal,
       int flags,
-      int dataOffset,
-      int scale) {
-    try {
-      ByteArrayOutputStream baos = new ByteArrayOutputStream(COLUMN_DEFINITION_SIZE);
-      DataOutputStream dos = new DataOutputStream(baos);
-
-      dos.writeInt(nameId); // 0-3: name_id
-      dos.writeByte(operatorOrdinal); // 4: operator
-      dos.writeByte(typeOrdinal); // 5: column_type
-      dos.writeByte(roleOrdinal); // 6: column_role
-      dos.writeByte(flags); // 7: flags
-      dos.writeInt(dataOffset); // 8-11: data_offset
-      dos.writeInt(scale); // 12-15: decimal scale
-
-      dos.flush();
-      return baos.toByteArray();
-    } catch (IOException e) {
-      throw new IllegalStateException("Failed to write column definition", e);
-    }
-  }
-
-  /**
-   * Writes the rule order index.
-   *
-   * @param orderType 0=insertion order, 1=priority order
-   * @param ruleIndices row indices in evaluation order
-   * @return serialized rule order index
-   */
-  static byte[] writeRuleOrderIndex(int orderType, List<Integer> ruleIndices) {
-    try {
-      ByteArrayOutputStream baos = new ByteArrayOutputStream();
-      DataOutputStream dos = new DataOutputStream(baos);
-
-      dos.writeByte(orderType);
-      for (int index : ruleIndices) {
-        dos.writeInt(index);
-      }
-
-      dos.flush();
-      return baos.toByteArray();
-    } catch (IOException e) {
-      throw new IllegalStateException("Failed to write rule order", e);
-    }
+      long dataOffset,
+      int scale)
+      throws IOException {
+    dos.writeInt(nameId); // 0-3: name_id
+    dos.writeByte(operatorOrdinal); // 4: operator
+    dos.writeByte(typeOrdinal); // 5: column_type
+    dos.writeByte(roleOrdinal); // 6: column_role
+    dos.writeByte(flags); // 7: flags
+    dos.writeLong(dataOffset); // 8-15: data_offset
+    dos.writeInt(scale); // 16-19: decimal scale
+    dos.writeInt(0); // 20-23: reserved
   }
 
   private static int artifactKindOrdinal(ArtifactKind kind) {

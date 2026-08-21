@@ -2,73 +2,97 @@ package in.systemhalted.kisoku.runtime.loader;
 
 import in.systemhalted.kisoku.api.RulesetMetadata;
 import in.systemhalted.kisoku.api.compilation.CompiledRuleset;
+import in.systemhalted.kisoku.api.loading.LoadException;
 import in.systemhalted.kisoku.api.loading.LoadOptions;
 import in.systemhalted.kisoku.api.loading.LoadedRuleset;
 import in.systemhalted.kisoku.api.loading.RulesetLoader;
+import in.systemhalted.kisoku.runtime.compiler.CompiledRulesetImpl;
 import in.systemhalted.kisoku.runtime.csv.Operator;
 import in.systemhalted.kisoku.runtime.loader.index.PostingListIndex;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.channels.FileChannel;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Loads compiled decision table artifacts into memory for evaluation.
+ * Loads compiled decision table artifacts for evaluation.
  *
- * <p>Supports two loading modes:
+ * <p>Compiled rulesets are file-backed, so both {@code load(CompiledRuleset)} and {@code
+ * load(Path)} resolve to the same file paths:
  *
  * <ul>
- *   <li>On-heap: Copies data into Java arrays for fastest access
- *   <li>Memory-mapped: Uses direct ByteBuffer for lower memory footprint
+ *   <li>Memory-mapped (default): the artifact is mapped section by section - metadata once, each
+ *       column's data as its own mapping - so no mapping spans 2 GB and artifacts of any size load
+ *       without copying onto the heap.
+ *   <li>On-heap: the whole file is read into one array; only possible for artifacts under 2 GB.
  * </ul>
  *
- * <p>When {@code prewarmIndexes} is enabled, builds column indexes at load time for faster
- * evaluation.
+ * <p>When {@code prewarmIndexes} is enabled (the default), per-column posting-list indexes are
+ * built at load time into direct buffers.
  */
 public final class CsvRulesetLoader implements RulesetLoader {
 
   @Override
   public LoadedRuleset load(CompiledRuleset compiled, LoadOptions options) {
-    byte[] bytes = compiled.bytes();
-
-    if (options.isMemoryMap()) {
-      return loadMemoryMapped(bytes, compiled, options);
-    } else {
-      return loadOnHeap(bytes, compiled, options);
+    try {
+      if (compiled instanceof CompiledRulesetImpl fileBacked) {
+        return loadFromFile(fileBacked.artifactPath(), options, compiled.metadata());
+      }
+      // Foreign implementation: all we have is its byte form.
+      ByteBuffer buffer = ByteBuffer.wrap(compiled.bytes()).order(ByteOrder.BIG_ENDIAN);
+      return buildFromBuffer(buffer, options, compiled.metadata());
+    } catch (IOException e) {
+      throw new LoadException("Failed to load compiled artifact: " + e.getMessage(), e);
     }
   }
 
   @Override
   public LoadedRuleset load(Path artifact, LoadOptions options) throws IOException {
+    return loadFromFile(artifact, options, null);
+  }
+
+  private LoadedRuleset loadFromFile(Path artifact, LoadOptions options, RulesetMetadata metadata)
+      throws IOException {
     if (!options.isMemoryMap()) {
-      // On-heap load from a file: read the bytes and reuse the in-memory path.
-      byte[] bytes = java.nio.file.Files.readAllBytes(artifact);
-      ByteBuffer buffer = ByteBuffer.wrap(bytes).order(ByteOrder.BIG_ENDIAN);
-      return buildLoadedRuleset(buffer, null, options);
+      long size = Files.size(artifact);
+      if (size > Integer.MAX_VALUE - 8) {
+        throw new LoadException(
+            "Artifact is "
+                + size
+                + " bytes; on-heap loading is limited to 2GB - use"
+                + " LoadOptions.memoryMap()");
+      }
+      ByteBuffer buffer = ByteBuffer.wrap(Files.readAllBytes(artifact)).order(ByteOrder.BIG_ENDIAN);
+      return buildFromBuffer(buffer, options, metadata);
     }
 
-    // Memory-mapped load: map the file read-only and keep the channel open for cleanup. The mapped
-    // buffer is never copied to the heap; decoders read column data through it via absolute
-    // offsets.
+    // Memory-mapped: per-section mappings through one channel, kept open for cleanup.
     FileChannel channel = FileChannel.open(artifact, StandardOpenOption.READ);
     try {
-      ByteBuffer mapped =
-          channel.map(FileChannel.MapMode.READ_ONLY, 0, channel.size()).order(ByteOrder.BIG_ENDIAN);
-      return buildLoadedRuleset(mapped, channel, options);
+      BinaryArtifactReader reader = BinaryArtifactReader.readMapped(channel);
+      return build(reader, channel, options, metadata);
     } catch (RuntimeException | IOException e) {
       channel.close();
       throw e;
     }
   }
 
-  private LoadedRuleset buildLoadedRuleset(
-      ByteBuffer buffer, AutoCloseable resource, LoadOptions options) {
-    BinaryArtifactReader reader = BinaryArtifactReader.read(buffer);
+  /** Builds a ruleset from an artifact wholly contained in one heap buffer. */
+  private LoadedRuleset buildFromBuffer(
+      ByteBuffer buffer, LoadOptions options, RulesetMetadata metadata) {
+    return build(BinaryArtifactReader.read(buffer), null, options, metadata);
+  }
 
+  private LoadedRuleset build(
+      BinaryArtifactReader reader,
+      AutoCloseable resource,
+      LoadOptions options,
+      RulesetMetadata metadata) {
     StringDictionaryReader dictionary = reader.dictionary();
     List<PostingListIndex> indexes = null;
     if (options.isPrewarmIndexes()) {
@@ -76,12 +100,12 @@ public final class CsvRulesetLoader implements RulesetLoader {
     }
 
     return new LoadedRulesetImpl(
-        buildMetadata(reader),
+        metadata != null ? metadata : buildMetadata(reader),
         reader.columns(),
         reader.decoders(),
         reader.ruleOrder(),
         reader.rowCount(),
-        buffer.isDirect() ? buffer : null,
+        null,
         resource,
         indexes,
         dictionary);
@@ -105,59 +129,6 @@ public final class CsvRulesetLoader implements RulesetLoader {
 
     return new RulesetMetadata(
         reader.rowCount(), inputColumns, outputColumns, priorityColumn, reader.artifactKind());
-  }
-
-  private LoadedRuleset loadOnHeap(byte[] bytes, CompiledRuleset compiled, LoadOptions options) {
-    ByteBuffer buffer = ByteBuffer.wrap(bytes).order(ByteOrder.BIG_ENDIAN);
-    BinaryArtifactReader reader = BinaryArtifactReader.read(buffer);
-
-    // The dictionary is always needed (e.g. to coerce string inputs in the bulk kernel),
-    // independent of index prewarming.
-    StringDictionaryReader dictionary = reader.dictionary();
-    List<PostingListIndex> indexes = null;
-    if (options.isPrewarmIndexes()) {
-      indexes = buildIndexes(reader.columns(), reader.decoders(), reader.rowCount());
-    }
-
-    return new LoadedRulesetImpl(
-        compiled.metadata(),
-        reader.columns(),
-        reader.decoders(),
-        reader.ruleOrder(),
-        reader.rowCount(),
-        null, // No direct buffer to clean up
-        indexes,
-        dictionary);
-  }
-
-  private LoadedRuleset loadMemoryMapped(
-      byte[] bytes, CompiledRuleset compiled, LoadOptions options) {
-    // For true memory-mapping, we'd need the artifact on disk
-    // Since CompiledRuleset provides bytes[], we create a direct ByteBuffer
-    ByteBuffer direct = ByteBuffer.allocateDirect(bytes.length);
-    direct.put(bytes);
-    direct.flip();
-    direct.order(ByteOrder.BIG_ENDIAN);
-
-    BinaryArtifactReader reader = BinaryArtifactReader.read(direct);
-
-    // The dictionary is always needed (e.g. to coerce string inputs in the bulk kernel),
-    // independent of index prewarming.
-    StringDictionaryReader dictionary = reader.dictionary();
-    List<PostingListIndex> indexes = null;
-    if (options.isPrewarmIndexes()) {
-      indexes = buildIndexes(reader.columns(), reader.decoders(), reader.rowCount());
-    }
-
-    return new LoadedRulesetImpl(
-        compiled.metadata(),
-        reader.columns(),
-        reader.decoders(),
-        reader.ruleOrder(),
-        reader.rowCount(),
-        direct, // Keep reference for potential cleanup
-        indexes,
-        dictionary);
   }
 
   /**

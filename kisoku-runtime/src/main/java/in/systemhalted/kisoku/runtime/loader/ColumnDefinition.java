@@ -23,7 +23,7 @@ record ColumnDefinition(
     ColumnType type,
     ColumnRole role,
     int flags,
-    int dataOffset,
+    long dataOffset,
     int scale) {
 
   /** Flag indicating the column allows null values. */

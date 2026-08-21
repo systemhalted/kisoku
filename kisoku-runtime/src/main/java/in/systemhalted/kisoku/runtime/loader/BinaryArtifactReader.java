@@ -5,18 +5,20 @@ import in.systemhalted.kisoku.api.ColumnType;
 import in.systemhalted.kisoku.api.evaluation.RuleSelectionPolicy;
 import in.systemhalted.kisoku.api.loading.LoadException;
 import in.systemhalted.kisoku.runtime.csv.Operator;
+import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.nio.channels.FileChannel;
 import java.util.ArrayList;
 import java.util.List;
 
 /**
  * Parses the binary artifact format produced by BinaryArtifactWriter.
  *
- * <p>Format layout:
+ * <p>Format layout (all offsets 64-bit; the artifact may exceed 2 GB):
  *
  * <pre>
- * Header (32 bytes)
+ * Header (64 bytes)
  *   magic: 0x4B495353 ("KISS")
  *   version_major: 2 bytes
  *   version_minor: 2 bytes
@@ -25,21 +27,34 @@ import java.util.List;
  *   reserved: 2 bytes
  *   column_count: 4 bytes
  *   row_count: 4 bytes
- *   dictionary_offset: 4 bytes
- *   columns_offset: 4 bytes
- *   data_offset: 4 bytes
+ *   dictionary_offset: 8 bytes
+ *   columns_offset: 8 bytes
+ *   data_offset: 8 bytes
+ *   rule_order_offset: 8 bytes
+ *   reserved: 12 bytes
  *
  * String Dictionary
- * Column Definitions (16 bytes each)
- * Rule Data (columnar)
- * Rule Order Index
+ * Column Definitions (24 bytes each)
+ * Rule Data (columnar; each column's data under 2 GB)
+ * Rule Order (order_type byte; 0 = identity, 1 = explicit int[row_count])
  * </pre>
+ *
+ * <p>Two read paths:
+ *
+ * <ul>
+ *   <li>{@link #read(ByteBuffer)} - the whole artifact in one buffer. Only possible for artifacts
+ *       that fit a single buffer (≤ 2 GB), which is guaranteed for anything that arrived as a
+ *       {@code byte[]}.
+ *   <li>{@link #readMapped(FileChannel)} - maps the metadata region once and each column's data
+ *       slice as its own buffer, so no single mapping needs to span 2 GB and the artifact size is
+ *       unbounded.
+ * </ul>
  */
 final class BinaryArtifactReader {
   /** Magic bytes: "KISS" (0x4B495353) */
   static final int MAGIC = 0x4B495353;
 
-  static final short VERSION_MAJOR = 3;
+  static final short VERSION_MAJOR = 4;
 
   /**
    * Highest minor version this reader understands. The reader accepts any minor version with a
@@ -47,69 +62,63 @@ final class BinaryArtifactReader {
    */
   static final short VERSION_MINOR = 0;
 
-  static final int HEADER_SIZE = 32;
-  static final int COLUMN_DEF_SIZE = 16;
+  static final int HEADER_SIZE = 64;
+  static final int COLUMN_DEF_SIZE = 24;
 
-  /** Bytes per stored value: every column type encodes to a 64-bit order-preserving code. */
-  static final int VALUE_SIZE = 8;
+  /** Rule-order type: rows are stored in evaluation order; no explicit array follows. */
+  static final int RULE_ORDER_IDENTITY = 0;
 
-  private final ByteBuffer buffer;
+  /** Rule-order type: an explicit int[row_count] evaluation order follows. */
+  static final int RULE_ORDER_EXPLICIT = 1;
+
   private final ArtifactKind artifactKind;
   private final RuleSelectionPolicy ruleSelection;
   private final int columnCount;
   private final int rowCount;
-  private final int dictionaryOffset;
-  private final int columnsOffset;
-  private final int dataOffset;
   private final StringDictionaryReader dictionary;
   private final List<ColumnDefinition> columns;
   private final List<ColumnDecoder> decoders;
-  private final int[] ruleOrder;
+  private final int[] ruleOrder; // null = identity
 
   private BinaryArtifactReader(
-      ByteBuffer buffer,
       ArtifactKind artifactKind,
       RuleSelectionPolicy ruleSelection,
       int columnCount,
       int rowCount,
-      int dictionaryOffset,
-      int columnsOffset,
-      int dataOffset,
       StringDictionaryReader dictionary,
       List<ColumnDefinition> columns,
       List<ColumnDecoder> decoders,
       int[] ruleOrder) {
-    this.buffer = buffer;
     this.artifactKind = artifactKind;
     this.ruleSelection = ruleSelection;
     this.columnCount = columnCount;
     this.rowCount = rowCount;
-    this.dictionaryOffset = dictionaryOffset;
-    this.columnsOffset = columnsOffset;
-    this.dataOffset = dataOffset;
     this.dictionary = dictionary;
     this.columns = columns;
     this.decoders = decoders;
     this.ruleOrder = ruleOrder;
   }
 
-  /**
-   * Reads a binary artifact from a ByteBuffer.
-   *
-   * @param buffer the buffer containing the artifact (must be in BIG_ENDIAN order)
-   * @return the parsed artifact reader
-   */
-  static BinaryArtifactReader read(ByteBuffer buffer) {
+  /** Parsed header fields, shared by both read paths. */
+  private record Header(
+      ArtifactKind kind,
+      RuleSelectionPolicy selection,
+      int columnCount,
+      int rowCount,
+      long dictionaryOffset,
+      long columnsOffset,
+      long dataOffset,
+      long ruleOrderOffset) {}
+
+  private static Header readHeader(ByteBuffer buffer) {
     buffer.order(ByteOrder.BIG_ENDIAN);
     buffer.position(0);
 
-    // Read header
     int magic = buffer.getInt();
     if (magic != MAGIC) {
       throw new LoadException(
           String.format("Invalid artifact magic: expected 0x%08X, got 0x%08X", MAGIC, magic));
     }
-
     short versionMajor = buffer.getShort();
     short versionMinor = buffer.getShort();
     if (versionMajor != VERSION_MAJOR) {
@@ -118,91 +127,141 @@ final class BinaryArtifactReader {
               "Unsupported artifact version: %d.%d (expected %d.%d)",
               versionMajor, versionMinor, VERSION_MAJOR, VERSION_MINOR));
     }
-
-    int artifactKindOrdinal = buffer.get() & 0xFF;
-    int ruleSelectionOrdinal = buffer.get() & 0xFF;
+    int kindOrdinal = buffer.get() & 0xFF;
+    int selectionOrdinal = buffer.get() & 0xFF;
     buffer.getShort(); // reserved
-
     int columnCount = buffer.getInt();
     int rowCount = buffer.getInt();
-    int dictionaryOffset = buffer.getInt();
-    int columnsOffset = buffer.getInt();
-    int dataOffset = buffer.getInt();
+    long dictionaryOffset = buffer.getLong();
+    long columnsOffset = buffer.getLong();
+    long dataOffset = buffer.getLong();
+    long ruleOrderOffset = buffer.getLong();
 
-    ArtifactKind artifactKind = artifactKindFromOrdinal(artifactKindOrdinal);
-    RuleSelectionPolicy ruleSelection = ruleSelectionFromOrdinal(ruleSelectionOrdinal);
-
-    // Read string dictionary
-    StringDictionaryReader dictionary = StringDictionaryReader.read(buffer, dictionaryOffset);
-
-    // Read column definitions
-    List<ColumnDefinition> columns =
-        readColumnDefinitions(buffer, columnsOffset, columnCount, dictionary);
-
-    // Create decoders from each column's absolute base (data_offset is relative to the rule-data
-    // section). Decoders read lazily through the buffer; no column data is copied onto the heap.
-    List<ColumnDecoder> decoders = new ArrayList<>(columnCount);
-    int dataSectionEnd = dataOffset;
-    for (ColumnDefinition col : columns) {
-      int base = dataOffset + col.dataOffset();
-      decoders.add(createDecoder(col, buffer, base, rowCount, dictionary));
-      dataSectionEnd = Math.max(dataSectionEnd, base + columnDataSize(col, buffer, base, rowCount));
-    }
-
-    // The rule order index immediately follows the rule-data section.
-    int[] ruleOrder = readRuleOrder(buffer, dataSectionEnd, rowCount);
-
-    return new BinaryArtifactReader(
-        buffer,
-        artifactKind,
-        ruleSelection,
+    return new Header(
+        artifactKindFromOrdinal(kindOrdinal),
+        ruleSelectionFromOrdinal(selectionOrdinal),
         columnCount,
         rowCount,
         dictionaryOffset,
         columnsOffset,
         dataOffset,
+        ruleOrderOffset);
+  }
+
+  /**
+   * Reads an artifact wholly contained in one buffer.
+   *
+   * @param buffer the buffer containing the artifact (must be in BIG_ENDIAN order)
+   * @return the parsed artifact reader
+   */
+  static BinaryArtifactReader read(ByteBuffer buffer) {
+    Header header = readHeader(buffer);
+
+    StringDictionaryReader dictionary =
+        StringDictionaryReader.read(buffer, checkedInt(header.dictionaryOffset(), "dictionary"));
+    List<ColumnDefinition> columns =
+        readColumnDefinitions(
+            buffer,
+            checkedInt(header.columnsOffset(), "columns"),
+            header.columnCount(),
+            dictionary);
+
+    List<ColumnDecoder> decoders = new ArrayList<>(header.columnCount());
+    for (ColumnDefinition col : columns) {
+      int base = checkedInt(header.dataOffset() + col.dataOffset(), "column data");
+      decoders.add(ColumnDecoder.create(col, buffer, base, header.rowCount(), dictionary));
+    }
+
+    int[] ruleOrder =
+        readRuleOrder(
+            buffer, checkedInt(header.ruleOrderOffset(), "rule order"), header.rowCount());
+
+    return new BinaryArtifactReader(
+        header.kind(),
+        header.selection(),
+        header.columnCount(),
+        header.rowCount(),
         dictionary,
         columns,
         List.copyOf(decoders),
         ruleOrder);
   }
 
-  private static ColumnDecoder createDecoder(
-      ColumnDefinition column,
-      ByteBuffer buffer,
-      int base,
-      int rowCount,
-      StringDictionaryReader dictionary) {
-    return ColumnDecoder.create(column, buffer, base, rowCount, dictionary);
-  }
-
   /**
-   * Computes the encoded byte size of a column's data, used to locate the end of the rule-data
-   * section (where the rule order index begins). Scalar and range sizes are formulaic; set columns
-   * additionally depend on the packed all_values length, derived from the per-row offsets/lengths.
+   * Reads an artifact by memory-mapping the file section by section: one mapping for the metadata
+   * region (header, dictionary, column definitions) and one per column's data slice. No mapping
+   * spans more than one column, so the artifact itself may exceed 2 GB.
+   *
+   * @param channel an open channel on the artifact file (kept open by the caller for the mappings'
+   *     lifetime)
+   * @return the parsed artifact reader
+   * @throws IOException if mapping fails
    */
-  private static int columnDataSize(
-      ColumnDefinition column, ByteBuffer buffer, int base, int rowCount) {
-    int bitmapSize = BitMapUtils.bitmapSize(rowCount);
-    return switch (column.operator()) {
-      case RULE_ID -> InlineStringColumnDecoder.dataSize(buffer, base, rowCount);
-      case BETWEEN_INCLUSIVE, BETWEEN_EXCLUSIVE, NOT_BETWEEN_INCLUSIVE, NOT_BETWEEN_EXCLUSIVE ->
-          bitmapSize + rowCount * VALUE_SIZE * 2;
-      case IN, NOT_IN -> {
-        int offsetsBase = base + bitmapSize;
-        int lengthsBase = offsetsBase + rowCount * 4;
-        int totalValues = 0;
-        for (int i = 0; i < rowCount; i++) {
-          int end =
-              buffer.getInt(offsetsBase + i * 4) + (buffer.getShort(lengthsBase + i * 2) & 0xFFFF);
-          if (end > totalValues) {
-            totalValues = end;
-          }
-        }
-        yield bitmapSize + rowCount * 4 + rowCount * 2 + totalValues * VALUE_SIZE;
+  static BinaryArtifactReader readMapped(FileChannel channel) throws IOException {
+    long fileSize = channel.size();
+    if (fileSize < HEADER_SIZE) {
+      throw new LoadException("Artifact file is truncated: " + fileSize + " bytes");
+    }
+    ByteBuffer headerBuf =
+        channel.map(FileChannel.MapMode.READ_ONLY, 0, Math.min(fileSize, HEADER_SIZE));
+    headerBuf.order(ByteOrder.BIG_ENDIAN);
+    Header header = readHeader(headerBuf);
+
+    if (header.dataOffset() > Integer.MAX_VALUE) {
+      throw new LoadException("Metadata region exceeds 2GB: " + header.dataOffset());
+    }
+    // Metadata region: header + dictionary + column definitions in one mapping.
+    ByteBuffer meta =
+        channel
+            .map(FileChannel.MapMode.READ_ONLY, 0, header.dataOffset())
+            .order(ByteOrder.BIG_ENDIAN);
+    StringDictionaryReader dictionary =
+        StringDictionaryReader.read(meta, (int) header.dictionaryOffset());
+    List<ColumnDefinition> columns =
+        readColumnDefinitions(meta, (int) header.columnsOffset(), header.columnCount(), dictionary);
+
+    // Per-column mappings. Definitions are written in data order, so each column's size is the
+    // distance to the next column's offset (the last column ends at the rule-order section).
+    List<ColumnDecoder> decoders = new ArrayList<>(header.columnCount());
+    for (int c = 0; c < columns.size(); c++) {
+      ColumnDefinition col = columns.get(c);
+      long start = header.dataOffset() + col.dataOffset();
+      long end =
+          c + 1 < columns.size()
+              ? header.dataOffset() + columns.get(c + 1).dataOffset()
+              : header.ruleOrderOffset();
+      long size = end - start;
+      if (size < 0 || size > Integer.MAX_VALUE) {
+        throw new LoadException("Column '" + col.name() + "' data size invalid: " + size);
       }
-      default -> bitmapSize + rowCount * VALUE_SIZE;
-    };
+      ByteBuffer slice =
+          channel.map(FileChannel.MapMode.READ_ONLY, start, size).order(ByteOrder.BIG_ENDIAN);
+      decoders.add(ColumnDecoder.create(col, slice, 0, header.rowCount(), dictionary));
+    }
+
+    // Rule order section.
+    long orderSize = fileSize - header.ruleOrderOffset();
+    if (orderSize < 1) {
+      throw new LoadException("Artifact is missing the rule order section");
+    }
+    ByteBuffer orderBuf =
+        channel
+            .map(
+                FileChannel.MapMode.READ_ONLY,
+                header.ruleOrderOffset(),
+                Math.min(orderSize, 1L + 4L * header.rowCount()))
+            .order(ByteOrder.BIG_ENDIAN);
+    int[] ruleOrder = readRuleOrder(orderBuf, 0, header.rowCount());
+
+    return new BinaryArtifactReader(
+        header.kind(),
+        header.selection(),
+        header.columnCount(),
+        header.rowCount(),
+        dictionary,
+        columns,
+        List.copyOf(decoders),
+        ruleOrder);
   }
 
   private static List<ColumnDefinition> readColumnDefinitions(
@@ -216,8 +275,9 @@ final class BinaryArtifactReader {
       int typeOrdinal = buffer.get() & 0xFF;
       int roleOrdinal = buffer.get() & 0xFF;
       int flags = buffer.get() & 0xFF;
-      int columnDataOffset = buffer.getInt();
+      long columnDataOffset = buffer.getLong();
       int scale = buffer.getInt();
+      buffer.getInt(); // reserved
 
       String name = dictionary.get(nameId);
       Operator operator = Operator.values()[operatorOrdinal];
@@ -234,14 +294,18 @@ final class BinaryArtifactReader {
   /**
    * Reads the evaluation-order sequence, or returns null for the identity permutation.
    *
-   * <p>The compiler writes rows to the rule-data section already in evaluation order, so the stored
-   * sequence is the identity for every artifact it produces. Representing that implicitly avoids
-   * holding a 4-bytes-per-row array on the heap for the normal case; a non-identity sequence (a
-   * foreign or corrupted artifact) is still materialized and honored.
+   * <p>Order type 0 declares identity explicitly with no array. Type 1 carries an explicit
+   * sequence, which is still collapsed to null if it happens to be the identity.
    */
   private static int[] readRuleOrder(ByteBuffer buffer, int offset, int rowCount) {
-    int pos = offset;
-    pos += 1; // order_type byte (unused here; evaluation order is the stored sequence)
+    int orderType = buffer.get(offset) & 0xFF;
+    if (orderType == RULE_ORDER_IDENTITY) {
+      return null;
+    }
+    if (orderType != RULE_ORDER_EXPLICIT) {
+      throw new LoadException("Unknown rule order type: " + orderType);
+    }
+    int pos = offset + 1;
     boolean identity = true;
     for (int i = 0; i < rowCount; i++) {
       if (buffer.getInt(pos + i * 4) != i) {
@@ -257,6 +321,14 @@ final class BinaryArtifactReader {
       order[i] = buffer.getInt(pos + i * 4);
     }
     return order;
+  }
+
+  private static int checkedInt(long value, String what) {
+    if (value < 0 || value > Integer.MAX_VALUE) {
+      throw new LoadException(
+          "Artifact " + what + " offset " + value + " requires a file-mapped load (over 2GB)");
+    }
+    return (int) value;
   }
 
   private static ArtifactKind artifactKindFromOrdinal(int ordinal) {
@@ -278,10 +350,6 @@ final class BinaryArtifactReader {
 
   // Accessors
 
-  ByteBuffer buffer() {
-    return buffer;
-  }
-
   ArtifactKind artifactKind() {
     return artifactKind;
   }
@@ -296,10 +364,6 @@ final class BinaryArtifactReader {
 
   int rowCount() {
     return rowCount;
-  }
-
-  int dataOffset() {
-    return dataOffset;
   }
 
   StringDictionaryReader dictionary() {

@@ -471,9 +471,12 @@ These matter because they are load-bearing for design decisions:
 9. ~~**Prefix-OR bitmaps for `ComparisonIndex`**~~ (§3.5). **Fixed differently** —
    comparison lookups are an O(log distinct) offset subtraction on the CSR
    layout; no per-threshold bitmaps exist to OR.
-10. **64-bit artifact offsets and a streaming artifact writer** (§3.6), plus a
-    genuinely streaming two-pass compiler (§3.7) so compilation memory is
-    independent of row count.
+10. ~~**64-bit artifact offsets and a streaming artifact writer**~~ (§3.6),
+    ~~plus a genuinely streaming two-pass compiler~~ (§3.7). **Fixed** — artifact
+    format 4.0 (ADR-0012): 64-bit section and column offsets, file-backed
+    `CompiledRuleset` streamed through a channel, per-column mappings at load so
+    no buffer spans 2 GB, and a two-pass streaming compiler whose heap is
+    independent of table size (§11).
 
 **Tier 3 — completeness**
 
@@ -624,3 +627,33 @@ the table, indexes, and rule ids all live off-heap (mmap + direct buffers).
 Still open in Tier 2: compile-time index persistence, 64-bit artifact offsets + streaming
 writer, and the streaming compiler (§3.7) — compile-time heap and the 60 s compile target
 remain the outstanding scale problems.
+
+
+---
+
+## 11. What the streaming compiler and 64-bit offsets changed
+
+Artifact format 4.0 (ADR-0012). The compiler now streams: pass 1 collects the dictionary,
+decimal scales, and one priority int per row; pass 2 encodes each cell as it is read into
+per-column temporary files; a stitch phase writes the artifact file sequentially, permuting
+one column at a time into evaluation order. `CompiledRuleset` is file-backed, all format
+offsets are 64-bit, and the loader maps each column's data as its own buffer — so artifacts
+may exceed 2 GB (per-column data stays under 2 GB) and `load(compiled)` now maps the
+artifact file instead of copying bytes into a direct buffer.
+
+Measured at 5M rows × 10 EQ string columns (335 MB CSV):
+
+| Metric | §3 baseline | after |
+|---|---|---|
+| Compile time | 84.9 s (§9) / 58.2 s (§10) | **45.4 s**, and **34.9 s under a 256 MB heap cap** |
+| Compile completes in 256 MB heap | no — the table alone is ~1.5 GB of strings | **yes** |
+| Artifact ceiling | 2 GB (single `byte[]`, int offsets) | unbounded (per-column < 2 GB) |
+| PRD max shape (20M × 170 cols, ~27 GB artifact) | not representable, not compilable | representable and compilable in bounded heap |
+
+The 60 s compile target (NFR6) is now met with margin, and compile heap is bounded by the
+dictionary plus one int per row plus the largest single column — not the table.
+
+With §9 (indexes), §10 (dictionary/RULE_ID), and this change, every scale finding from §3 is
+closed except one optional item: **compile-time index persistence** — indexes are still built
+at load time (12–13 s at 5M rows against a 60 s target), so persisting them into the
+artifact remains a load-time optimization, not a blocker.
