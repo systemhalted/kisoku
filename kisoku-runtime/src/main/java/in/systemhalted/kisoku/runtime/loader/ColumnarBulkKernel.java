@@ -149,15 +149,18 @@ final class ColumnarBulkKernel {
     int rows = inputs.size();
     int slots = inputColumnIndices.length;
     int[][] codes = new int[slots][rows];
+    boolean[][] present = new boolean[slots][rows];
     for (int k = 0; k < slots; k++) {
       ColumnDefinition col = columns.get(inputColumnIndices[k]);
       int[] column = codes[k];
+      boolean[] supplied = present[k];
       for (int row = 0; row < rows; row++) {
         Object value = inputs.get(row).get(col.name()).orElse(null);
+        supplied[row] = value != null;
         column[row] = TypeCoercion.toComparableInt(value, col.type(), dictionary);
       }
     }
-    return new InputBatch(codes, rows);
+    return new InputBatch(codes, present, rows);
   }
 
   /** Sequentially evaluates every row in the batch. */
@@ -230,7 +233,11 @@ final class ColumnarBulkKernel {
     System.arraycopy(allRowsBitmap, 0, scratch, 0, scratch.length);
     for (int slot : intersectionOrder) {
       ColumnIndex index = columnIndexes.get(inputColumnIndices[slot]);
-      CandidateBitmap.andInPlace(scratch, index.getCandidates(batch.code(slot, row)));
+      long[] colCandidates =
+          batch.present(slot, row)
+              ? index.getCandidates(batch.code(slot, row))
+              : index.candidatesForAbsentInput();
+      CandidateBitmap.andInPlace(scratch, colCandidates);
       if (CandidateBitmap.isEmpty(scratch)) {
         return null;
       }
@@ -253,7 +260,9 @@ final class ColumnarBulkKernel {
       if (columns.get(colIdx).isTestOnly()) {
         continue;
       }
-      if (!decoders.get(colIdx).matchesCoerced(rowIndex, batch.code(k, row))) {
+      if (!decoders
+          .get(colIdx)
+          .matchesCoerced(rowIndex, batch.code(k, row), batch.present(k, row))) {
         return false;
       }
     }

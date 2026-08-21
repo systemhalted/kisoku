@@ -100,7 +100,7 @@ public final class CsvRulesetCompiler implements RulesetCompiler {
     byte[] columnDefinitionsBytes =
         encodeColumnDefinitions(columns, dictionary, ruleData.columnOffsets());
     byte[] ruleDataBytes = ruleData.bytes();
-    byte[] ruleOrderBytes = encodeRuleOrder(ruleOrder, hasPriority, ruleSelection);
+    byte[] ruleOrderBytes = encodeRuleOrder(orderedRows.size(), hasPriority, ruleSelection);
     byte[] dictionaryBytes = dictionary.serialize();
 
     // Build artifact
@@ -363,14 +363,30 @@ public final class CsvRulesetCompiler implements RulesetCompiler {
     };
   }
 
-  private byte[] encodeRuleOrder(
-      List<Integer> ruleOrder, boolean hasPriority, RuleSelectionPolicy policy) {
+  /**
+   * Encodes the evaluation order over <em>physical</em> row positions.
+   *
+   * <p>Rows are already written to the artifact in evaluation order (see {@code orderedRows}), so
+   * the stored sequence is the identity permutation. Writing the source-row permutation here would
+   * apply the ordering twice at evaluation time, because the loader treats each stored entry as a
+   * physical row index.
+   *
+   * @param rowCount number of rows written to the artifact
+   * @param hasPriority whether a usable PRIORITY column is present
+   * @param policy the configured rule selection policy
+   * @return the encoded rule order section
+   */
+  private byte[] encodeRuleOrder(int rowCount, boolean hasPriority, RuleSelectionPolicy policy) {
     int orderType =
         (hasPriority
                 && (policy == RuleSelectionPolicy.PRIORITY || policy == RuleSelectionPolicy.AUTO))
             ? 1
             : 0;
-    return BinaryArtifactWriter.writeRuleOrderIndex(orderType, ruleOrder);
+    List<Integer> physicalOrder = new ArrayList<>(rowCount);
+    for (int i = 0; i < rowCount; i++) {
+      physicalOrder.add(i);
+    }
+    return BinaryArtifactWriter.writeRuleOrderIndex(orderType, physicalOrder);
   }
 
   /** Internal column metadata during compilation. */

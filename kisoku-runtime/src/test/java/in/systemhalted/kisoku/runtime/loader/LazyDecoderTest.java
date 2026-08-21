@@ -149,7 +149,9 @@ class LazyDecoderTest {
     for (int row = 0; row < ROW_COUNT; row++) {
       for (int v : new int[] {17, 18, 30, 65, 100}) {
         assertEquals(
-            decoder.matches(row, v), decoder.matchesCoerced(row, v), "row " + row + " value " + v);
+            decoder.matches(row, v),
+            decoder.matchesCoerced(row, v, true),
+            "row " + row + " value " + v);
       }
     }
   }

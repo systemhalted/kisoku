@@ -100,13 +100,28 @@ final class LoadedRulesetImpl implements LoadedRuleset {
 
   @Override
   public DecisionOutput evaluate(DecisionInput input) {
+    int rowIndex = findMatchingRow(input);
+    if (rowIndex < 0) {
+      throw new EvaluationException("No matching rule found for input");
+    }
+    return buildOutput(rowIndex);
+  }
+
+  /**
+   * Finds the winning rule row for an input.
+   *
+   * @param input the evaluation input
+   * @return the physical row index of the first matching rule in evaluation order, or -1 if no rule
+   *     matches
+   */
+  private int findMatchingRow(DecisionInput input) {
     // Use indexed evaluation if indexes are available
     if (columnIndexes != null && allRowsBitmap != null) {
-      return evaluateIndexed(input);
+      return findMatchingRowIndexed(input);
     }
 
     // Fallback to linear scan
-    return evaluateLinear(input);
+    return findMatchingRowLinear(input);
   }
 
   /**
@@ -114,13 +129,13 @@ final class LoadedRulesetImpl implements LoadedRuleset {
    *
    * <p>Used when indexes are not available.
    */
-  private DecisionOutput evaluateLinear(DecisionInput input) {
+  private int findMatchingRowLinear(DecisionInput input) {
     for (int rowIndex : ruleOrder) {
       if (matchesAllInputs(rowIndex, input)) {
-        return buildOutput(rowIndex);
+        return rowIndex;
       }
     }
-    throw new EvaluationException("No matching rule found for input");
+    return -1;
   }
 
   /**
@@ -130,7 +145,7 @@ final class LoadedRulesetImpl implements LoadedRuleset {
    * column's candidate bitmap 3. Iterate remaining candidates in priority order 4. Verify full
    * match (handles non-indexed columns and blank cells)
    */
-  private DecisionOutput evaluateIndexed(DecisionInput input) {
+  private int findMatchingRowIndexed(DecisionInput input) {
     // Start with all rows as candidates
     long[] candidates = CandidateBitmap.copy(allRowsBitmap);
 
@@ -146,17 +161,19 @@ final class LoadedRulesetImpl implements LoadedRuleset {
         continue;
       }
 
-      // Get input value and coerce to comparable int
+      // An absent input can only be satisfied by blank cells; a supplied value goes through the
+      // index. The two cases are distinct even though both may coerce to NULL_ID.
       Object inputValue = input.get(col.name()).orElse(null);
-      int coercedValue = TypeCoercion.toComparableInt(inputValue, col.type(), dictionary);
-
-      // Get candidate rows from index and intersect
-      long[] colCandidates = index.getCandidates(coercedValue);
+      long[] colCandidates =
+          inputValue == null
+              ? index.candidatesForAbsentInput()
+              : index.getCandidates(
+                  TypeCoercion.toComparableInt(inputValue, col.type(), dictionary));
       CandidateBitmap.andInPlace(candidates, colCandidates);
 
       // Early termination if no candidates remain
       if (CandidateBitmap.isEmpty(candidates)) {
-        throw new EvaluationException("No matching rule found for input");
+        return -1;
       }
     }
 
@@ -165,14 +182,21 @@ final class LoadedRulesetImpl implements LoadedRuleset {
       if (CandidateBitmap.isSet(candidates, rowIndex)) {
         // Verify all inputs match (handles non-indexed columns)
         if (matchesAllInputs(rowIndex, input)) {
-          return buildOutput(rowIndex);
+          return rowIndex;
         }
       }
     }
 
-    throw new EvaluationException("No matching rule found for input");
+    return -1;
   }
 
+  /**
+   * {@inheritDoc}
+   *
+   * <p>Each variant is evaluated independently: a variant that matches no rule contributes an empty
+   * result rather than failing the batch, so one unmatched variant never discards the outputs of
+   * the others.
+   */
   @Override
   public BulkResult evaluateBulk(DecisionInput base, List<DecisionInput> variants) {
     List<DecisionOutput> results = new ArrayList<>(variants.size());
@@ -180,11 +204,16 @@ final class LoadedRulesetImpl implements LoadedRuleset {
     for (DecisionInput variant : variants) {
       // Merge base and variant (variant overrides base)
       DecisionInput merged = merge(base, variant);
-      DecisionOutput output = evaluate(merged);
-      results.add(output);
+      results.add(evaluateOrNull(merged));
     }
 
     return new BulkResult(results);
+  }
+
+  /** Evaluates a single input, returning null instead of throwing when no rule matches. */
+  private DecisionOutput evaluateOrNull(DecisionInput input) {
+    int rowIndex = findMatchingRow(input);
+    return rowIndex >= 0 ? buildOutput(rowIndex) : null;
   }
 
   private boolean matchesAllInputs(int rowIndex, DecisionInput input) {

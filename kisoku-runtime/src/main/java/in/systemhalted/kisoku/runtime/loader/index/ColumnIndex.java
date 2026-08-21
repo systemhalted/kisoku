@@ -33,6 +33,18 @@ public sealed interface ColumnIndex permits EqualityIndex, ComparisonIndex, SetM
   long[] getCandidates(int inputValue);
 
   /**
+   * Get the candidate rows for an input that supplied no value for this column.
+   *
+   * <p>Only rows with blank cells qualify: a non-blank condition cannot be satisfied by an absent
+   * input, so it must not survive candidate filtering. This is distinct from {@link
+   * #getCandidates(int)} with a code of {@code NULL_ID}, which represents a value that was supplied
+   * but is unknown to the dictionary.
+   *
+   * @return bitmap of rows whose cell in this column is blank
+   */
+  long[] candidatesForAbsentInput();
+
+  /**
    * Estimate memory usage of this index in bytes.
    *
    * @return estimated memory size
