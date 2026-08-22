@@ -107,8 +107,9 @@ under 1 GB with bounded per-evaluation working set.
   (`FileChannel.map()`); `onHeap()` uses a heap buffer. In both cases column data
   is read **lazily through the buffer** by the decoders rather than copied into
   per-column heap arrays, keeping large tables off-heap to meet the <1GB budget.
-- Indexes are built at load time into direct (off-heap) buffers (eagerly with
-  `withPrewarmIndexes(true)`, the default, or not at all otherwise).
+- Indexes persisted in the artifact are memory-mapped at load; otherwise they are built
+  at load time into direct (off-heap) buffers. `withPrewarmIndexes(false)` disables them
+  entirely.
 - `LoadedRuleset` is immutable and thread-safe for concurrent evaluation;
   `close()` releases the buffer/mapping.
 
@@ -119,9 +120,12 @@ heap** (see ADR-0011): sorted distinct codes, per-code offsets, row-id postings,
 blank-cell rows. Each present cell is stored exactly once, so index size is linear in the
 column's data and independent of value skew.
 
-- **Indexed operators**: `EQ`, `NE`, `GT`, `GTE`, `LT`, `LTE` (scalar), `IN`, `NOT_IN`
-  (set membership). Negative operators index for exact candidate *counts* only — their match
-  sets are complements and are never enumerated, but a zero count is a correct early exit.
+- **Indexed operators**: all of them. `EQ`, `NE`, `GT`, `GTE`, `LT`, `LTE` (scalar) and
+  `IN`, `NOT_IN` (set membership) via posting lists; `BETWEEN_*`, `NOT_BETWEEN_*` via a
+  dual-sorted interval index (ADR-0013) whose counts are exact by inclusion-exclusion and
+  whose enumeration is the cheaper bound's superset. Negative operators index for exact
+  candidate *counts* only — their match sets are complements and are never enumerated, but a
+  zero count is a correct early exit.
 - **Candidate selection**: every indexed column reports an exact candidate count for the
   input in O(log distinct); the most selective enumerable column drives — its candidate rows
   (postings slice plus blanks) are iterated and each is verified against all input columns
@@ -133,7 +137,9 @@ column's data and independent of value skew.
   section stores the identity permutation over physical rows, and ascending row order is
   evaluation order during candidate enumeration.
 
-Range operators (`BETWEEN_*`) are not yet indexed and fall back to verification.
+Indexes are built at compile time and **persisted into the artifact** (format 4.1,
+ADR-0014), so loading maps them instead of rebuilding; artifacts compiled without them
+fall back to a load-time build.
 
 ### Performance Impact
 - Driver-based candidate enumeration keeps per-evaluation work proportional to the most

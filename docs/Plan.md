@@ -78,7 +78,8 @@ Implement a Java library for the decision-table rule engine described in `docs/P
   - [x] Build equality indexes for EQ/IN/NOT_IN columns (`EqualityIndex`, `SetMembershipIndex`)
   - [x] Build range indexes for GT/GTE/LT/LTE columns (`ComparisonIndex`)
   - [x] `NE` indexed (exact candidate counts; complements never enumerated)
-  - [ ] `BETWEEN_*`/`NOT_BETWEEN_*` indexes (verify-only today; roadmap Phase 3)
+  - [x] `BETWEEN_*`/`NOT_BETWEEN_*` indexes (dual-sorted interval index, ADR-0013)
+  - [x] Indexes persisted into the artifact at compile time (format 4.1, ADR-0014)
   - [x] Implement `FileChannel.map()` for file-backed artifacts (`load(Path)`)
   - [x] Lazy-load column sections on demand (decoders read through the mapped buffer)
   - **Status**: Indexed candidate filtering shipped with file-backed mmap; the remaining

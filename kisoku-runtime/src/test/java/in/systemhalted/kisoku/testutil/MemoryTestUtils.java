@@ -69,6 +69,23 @@ public final class MemoryTestUtils {
    *
    * @return optional containing the direct buffer pool bean
    */
+  /**
+   * The "mapped" buffer pool, which tracks memory-mapped file buffers (a separate pool from
+   * "direct" allocateDirect buffers).
+   *
+   * @return the mapped pool MXBean, if the JVM exposes one
+   */
+  public static Optional<BufferPoolMXBean> mappedBufferPool() {
+    return ManagementFactory.getPlatformMXBeans(BufferPoolMXBean.class).stream()
+        .filter(pool -> "mapped".equals(pool.getName()))
+        .findFirst();
+  }
+
+  /** Bytes held by memory-mapped buffers. */
+  public static long mappedBufferBytes() {
+    return mappedBufferPool().map(BufferPoolMXBean::getMemoryUsed).orElse(0L);
+  }
+
   public static Optional<BufferPoolMXBean> directBufferPool() {
     return ManagementFactory.getPlatformMXBeans(BufferPoolMXBean.class).stream()
         .filter(pool -> "direct".equals(pool.getName()))

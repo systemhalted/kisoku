@@ -686,5 +686,42 @@ With the scale work done, the remaining *declared-but-unfinished* surface was co
   the 65,535 limit, sub-microsecond timestamps, and a 1,000-issue cap with a final note.
 
 Still deliberately out of scope, per the project's own plan: JSON and database sources
-(phase 2+), `BETWEEN_*` indexing, and overlap/gap analysis in the validator. Compile-time
-index persistence remains the one open optimization (§11).
+(phase 2+) and overlap/gap analysis in the validator. `BETWEEN_*` indexing and compile-time
+index persistence were completed next — see §13.
+
+
+---
+
+## 13. Optimization pass: range indexing, persisted indexes, CI
+
+**Range operators are indexed** (ADR-0013). `BETWEEN_*` columns get a dual-sorted interval
+index: exact candidate counts by inclusion-exclusion over min- and max-sorted CSR
+structures (two binary searches), enumeration via whichever bound's contiguous superset is
+smaller, exhaustive verification filtering the rest. `NOT_BETWEEN_*` are count-only, like
+`NE`/`NOT_IN`. Inverted ranges are excluded from the structures (they can never match) but
+counted in the condition total, keeping both the zero-candidate early exit and the
+complement counts sound. With this, every operator the engine supports is index-covered —
+including the documentation's own headline BETWEEN example, which previously got no
+narrowing at all. Driver selection now distinguishes exact `candidateCount` from
+`enumerationCost` on a common `ColumnIndex` interface.
+
+**Indexes are persisted into the artifact** (ADR-0014, format 4.1, default on,
+`CompileOptions.withPersistIndexes(false)` to opt out). Blocks are byte-for-byte the
+runtime layout, so the loader constructs indexes over mapped slices with no parsing, no
+copying, and no build. Compatible both ways within major 4; artifacts without persisted
+indexes still build at load.
+
+| Metric (10 EQ cols × 500 distinct) | 200K rows | 5M rows |
+|---|---|---|
+| load(mmap), load-built indexes | 245 ms | 7.6 s |
+| load(mmap), persisted indexes | **1 ms** | **1 ms** |
+| compile without / with indexes | 0.96 s / 1.5 s | 22 s / 40 s |
+| artifact without / with | 20.6 MB | 522 MB / 713 MB |
+
+Load time is now constant in table size — the last per-load cost proportional to rows is
+gone. Compile stays inside the 60 s target with indexes included.
+
+**CI now verifies the claims**: the main build runs the gated `memory` tests on every push
+and pull request, and a weekly (or on-demand) workflow runs the `scale` + `memory` tags at
+a CI-sized row count — closing §5's "every scale claim is currently unverified by
+automation".

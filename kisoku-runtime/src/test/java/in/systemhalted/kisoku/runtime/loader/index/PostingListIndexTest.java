@@ -37,7 +37,7 @@ class PostingListIndexTest {
   private static List<Integer> matchRows(PostingListIndex index, long code) {
     List<Integer> rows = new ArrayList<>();
     for (int i = index.matchStart(code); i < index.matchEnd(code); i++) {
-      rows.add(index.postingRowAt(i));
+      rows.add(index.rowAt(i));
     }
     return rows;
   }
@@ -60,7 +60,7 @@ class PostingListIndexTest {
     assertEquals(4, index.candidateCount(100, true), "three matches + one blank");
     assertEquals(List.of(0, 2, 5), matchRows(index, 100), "ascending row order");
     assertEquals(List.of(3), blankRows(index));
-    assertTrue(index.matchSliceRowOrdered());
+    assertTrue(index.enumerationRowOrdered());
 
     assertEquals(2, index.candidateCount(200, true));
     assertEquals(List.of(1), matchRows(index, 200));
@@ -106,7 +106,7 @@ class PostingListIndexTest {
     assertEquals(List.of(0, 1), matchRows(index, 25));
     assertEquals(0 + 1, index.candidateCount(10, true), "10 itself is not < 10");
     assertEquals(3 + 1, index.candidateCount(1000, true));
-    assertFalse(index.matchSliceRowOrdered());
+    assertFalse(index.enumerationRowOrdered());
   }
 
   @Test
@@ -189,7 +189,7 @@ class PostingListIndexTest {
     assertEquals(List.of(0, 1), matchRows(index, 20));
     assertEquals(1 + 1, index.candidateCount(40, true));
     assertEquals(0 + 1, index.candidateCount(999, true), "unseen member: blank only");
-    assertTrue(index.matchSliceRowOrdered());
+    assertTrue(index.enumerationRowOrdered());
   }
 
   @Test

@@ -5,6 +5,9 @@ import in.systemhalted.kisoku.api.ColumnType;
 import in.systemhalted.kisoku.api.evaluation.RuleSelectionPolicy;
 import in.systemhalted.kisoku.api.loading.LoadException;
 import in.systemhalted.kisoku.runtime.csv.Operator;
+import in.systemhalted.kisoku.runtime.loader.index.ColumnIndex;
+import in.systemhalted.kisoku.runtime.loader.index.PostingListIndex;
+import in.systemhalted.kisoku.runtime.loader.index.RangeIntervalIndex;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
@@ -58,9 +61,10 @@ final class BinaryArtifactReader {
 
   /**
    * Highest minor version this reader understands. The reader accepts any minor version with a
-   * matching major (it only rejects on major mismatch).
+   * matching major (it only rejects on major mismatch); a 4.0 artifact simply has no persisted
+   * index section (index_offset reads as zero).
    */
-  static final short VERSION_MINOR = 0;
+  static final short VERSION_MINOR = 1;
 
   static final int HEADER_SIZE = 64;
   static final int COLUMN_DEF_SIZE = 24;
@@ -79,6 +83,7 @@ final class BinaryArtifactReader {
   private final List<ColumnDefinition> columns;
   private final List<ColumnDecoder> decoders;
   private final int[] ruleOrder; // null = identity
+  private final List<ColumnIndex> persistedIndexes; // null when the artifact carries none
 
   private BinaryArtifactReader(
       ArtifactKind artifactKind,
@@ -88,7 +93,8 @@ final class BinaryArtifactReader {
       StringDictionaryReader dictionary,
       List<ColumnDefinition> columns,
       List<ColumnDecoder> decoders,
-      int[] ruleOrder) {
+      int[] ruleOrder,
+      List<ColumnIndex> persistedIndexes) {
     this.artifactKind = artifactKind;
     this.ruleSelection = ruleSelection;
     this.columnCount = columnCount;
@@ -97,6 +103,7 @@ final class BinaryArtifactReader {
     this.columns = columns;
     this.decoders = decoders;
     this.ruleOrder = ruleOrder;
+    this.persistedIndexes = persistedIndexes;
   }
 
   /** Parsed header fields, shared by both read paths. */
@@ -108,7 +115,8 @@ final class BinaryArtifactReader {
       long dictionaryOffset,
       long columnsOffset,
       long dataOffset,
-      long ruleOrderOffset) {}
+      long ruleOrderOffset,
+      long indexOffset) {}
 
   private static Header readHeader(ByteBuffer buffer) {
     buffer.order(ByteOrder.BIG_ENDIAN);
@@ -136,6 +144,7 @@ final class BinaryArtifactReader {
     long columnsOffset = buffer.getLong();
     long dataOffset = buffer.getLong();
     long ruleOrderOffset = buffer.getLong();
+    long indexOffset = buffer.getLong(); // zero in 4.0 artifacts (was reserved)
 
     return new Header(
         artifactKindFromOrdinal(kindOrdinal),
@@ -145,7 +154,8 @@ final class BinaryArtifactReader {
         dictionaryOffset,
         columnsOffset,
         dataOffset,
-        ruleOrderOffset);
+        ruleOrderOffset,
+        indexOffset);
   }
 
   /**
@@ -176,6 +186,21 @@ final class BinaryArtifactReader {
         readRuleOrder(
             buffer, checkedInt(header.ruleOrderOffset(), "rule order"), header.rowCount());
 
+    List<ColumnIndex> persisted = null;
+    if (header.indexOffset() > 0) {
+      int directory = checkedInt(header.indexOffset(), "index directory");
+      try {
+        persisted =
+            readPersistedIndexes(
+                columns,
+                c -> buffer.getLong(directory + c * 16),
+                c -> buffer.getLong(directory + c * 16 + 8),
+                (offset, length) -> buffer.slice(checkedInt(offset, "index block"), length));
+      } catch (IOException e) {
+        throw new LoadException("Failed to read persisted indexes: " + e.getMessage(), e);
+      }
+    }
+
     return new BinaryArtifactReader(
         header.kind(),
         header.selection(),
@@ -184,7 +209,8 @@ final class BinaryArtifactReader {
         dictionary,
         columns,
         List.copyOf(decoders),
-        ruleOrder);
+        ruleOrder,
+        persisted);
   }
 
   /**
@@ -253,6 +279,23 @@ final class BinaryArtifactReader {
             .order(ByteOrder.BIG_ENDIAN);
     int[] ruleOrder = readRuleOrder(orderBuf, 0, header.rowCount());
 
+    List<ColumnIndex> persisted = null;
+    if (header.indexOffset() > 0) {
+      ByteBuffer directory =
+          channel
+              .map(FileChannel.MapMode.READ_ONLY, header.indexOffset(), 16L * columns.size())
+              .order(ByteOrder.BIG_ENDIAN);
+      persisted =
+          readPersistedIndexes(
+              columns,
+              c -> directory.getLong(c * 16),
+              c -> directory.getLong(c * 16 + 8),
+              (offset, length) ->
+                  channel
+                      .map(FileChannel.MapMode.READ_ONLY, offset, length)
+                      .order(ByteOrder.BIG_ENDIAN));
+    }
+
     return new BinaryArtifactReader(
         header.kind(),
         header.selection(),
@@ -261,7 +304,57 @@ final class BinaryArtifactReader {
         dictionary,
         columns,
         List.copyOf(decoders),
-        ruleOrder);
+        ruleOrder,
+        persisted);
+  }
+
+  /** Provides one index block's bytes, however the artifact is accessed. */
+  @FunctionalInterface
+  private interface BlockSource {
+    ByteBuffer block(long offset, int length) throws IOException;
+  }
+
+  /** Reads a per-column value from the index directory. */
+  @FunctionalInterface
+  private interface DirectoryField {
+    long get(int column);
+  }
+
+  /**
+   * Constructs the persisted per-column indexes from the artifact's index directory. Entries with a
+   * zero offset (non-indexable columns) stay null, matching the load-time builder's shape.
+   */
+  private static List<ColumnIndex> readPersistedIndexes(
+      List<ColumnDefinition> columns,
+      DirectoryField offsets,
+      DirectoryField lengths,
+      BlockSource blocks)
+      throws IOException {
+    List<ColumnIndex> indexes = new ArrayList<>(columns.size());
+    for (int c = 0; c < columns.size(); c++) {
+      long offset = offsets.get(c);
+      if (offset <= 0) {
+        indexes.add(null);
+        continue;
+      }
+      long length = lengths.get(c);
+      if (length <= 0 || length > Integer.MAX_VALUE) {
+        throw new LoadException("Index block for column " + c + " has invalid length " + length);
+      }
+      ByteBuffer block = blocks.block(offset, (int) length);
+      Operator op = columns.get(c).operator();
+      ColumnIndex index =
+          switch (op) {
+            case BETWEEN_INCLUSIVE,
+                    BETWEEN_EXCLUSIVE,
+                    NOT_BETWEEN_INCLUSIVE,
+                    NOT_BETWEEN_EXCLUSIVE ->
+                RangeIntervalIndex.readFrom(block, op);
+            default -> PostingListIndex.readFrom(block, op);
+          };
+      indexes.add(index);
+    }
+    return indexes;
   }
 
   private static List<ColumnDefinition> readColumnDefinitions(
@@ -381,5 +474,13 @@ final class BinaryArtifactReader {
   /** Evaluation-order sequence over physical rows, or null for the identity permutation. */
   int[] ruleOrder() {
     return ruleOrder;
+  }
+
+  /**
+   * Per-column indexes persisted in the artifact (positional with columns, nulls for non-indexable
+   * columns), or null when the artifact carries none.
+   */
+  List<ColumnIndex> persistedIndexes() {
+    return persistedIndexes;
   }
 }

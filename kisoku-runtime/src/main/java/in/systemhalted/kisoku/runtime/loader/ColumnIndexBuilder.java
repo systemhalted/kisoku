@@ -1,8 +1,10 @@
 package in.systemhalted.kisoku.runtime.loader;
 
 import in.systemhalted.kisoku.runtime.csv.Operator;
+import in.systemhalted.kisoku.runtime.loader.index.ColumnIndex;
 import in.systemhalted.kisoku.runtime.loader.index.PostingListIndex;
 import in.systemhalted.kisoku.runtime.loader.index.PostingListIndexBuilder;
+import in.systemhalted.kisoku.runtime.loader.index.RangeIntervalIndex;
 
 /**
  * Builds per-column posting-list indexes from decoded column data.
@@ -11,12 +13,14 @@ import in.systemhalted.kisoku.runtime.loader.index.PostingListIndexBuilder;
  *
  * <ul>
  *   <li>{@code EQ}, {@code GT}, {@code GTE}, {@code LT}, {@code LTE}, {@code NE} - scalar columns
- *   <li>{@code IN}, {@code NOT_IN} - set-membership columns (one posting per set member)
+ *       via {@link PostingListIndex}
+ *   <li>{@code IN}, {@code NOT_IN} - set-membership columns via {@link PostingListIndex} (one
+ *       posting per set member)
+ *   <li>{@code BETWEEN_*}, {@code NOT_BETWEEN_*} - range columns via {@link RangeIntervalIndex}
  * </ul>
  *
  * <p>Negative operators are indexed for exact candidate <em>counts</em> only; their match sets are
- * complements and are never enumerated. Range operators ({@code BETWEEN_*}) are not indexed and
- * fall back to verification.
+ * complements and are never enumerated.
  *
  * <p>The decoder accessors materialize each column's raw data on the heap transiently, one column
  * at a time; the finished index lives in a direct buffer off the heap.
@@ -32,7 +36,7 @@ final class ColumnIndexBuilder {
    * @param rowCount total number of rows
    * @return the built index, or null for non-input, test-only, or unsupported-operator columns
    */
-  static PostingListIndex build(ColumnDecoder decoder, ColumnDefinition column, int rowCount) {
+  static ColumnIndex build(ColumnDecoder decoder, ColumnDefinition column, int rowCount) {
     if (!column.isInput() || column.isTestOnly()) {
       return null;
     }
@@ -48,6 +52,16 @@ final class ColumnIndexBuilder {
       case SetMembershipColumnDecoder sets ->
           switch (op) {
             case IN, NOT_IN -> buildSetMembership(sets, op, rowCount);
+            case null, default -> null;
+          };
+      case RangeColumnDecoder ranges ->
+          switch (op) {
+            case BETWEEN_INCLUSIVE,
+                    BETWEEN_EXCLUSIVE,
+                    NOT_BETWEEN_INCLUSIVE,
+                    NOT_BETWEEN_EXCLUSIVE ->
+                RangeIntervalIndex.build(
+                    ranges.mins(), ranges.maxs(), ranges.presenceBitmap(), op, rowCount);
             case null, default -> null;
           };
       default -> null;

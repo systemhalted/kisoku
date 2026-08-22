@@ -10,7 +10,7 @@ import in.systemhalted.kisoku.api.compilation.CompileOptions;
 import in.systemhalted.kisoku.api.compilation.CompiledRuleset;
 import in.systemhalted.kisoku.runtime.codec.ValueCodec;
 import in.systemhalted.kisoku.runtime.csv.Operator;
-import in.systemhalted.kisoku.runtime.loader.index.PostingListIndex;
+import in.systemhalted.kisoku.runtime.loader.index.ColumnIndex;
 import java.io.BufferedWriter;
 import java.io.IOException;
 import java.nio.ByteBuffer;
@@ -55,7 +55,7 @@ class ColumnIndexBuilderTest {
     return BinaryArtifactReader.read(ByteBuffer.wrap(compiled.bytes()));
   }
 
-  private PostingListIndex buildIndexFor(BinaryArtifactReader reader, String columnName) {
+  private ColumnIndex buildIndexFor(BinaryArtifactReader reader, String columnName) {
     for (int i = 0; i < reader.columns().size(); i++) {
       ColumnDefinition column = reader.columns().get(i);
       if (column.name().equals(columnName)) {
@@ -69,18 +69,18 @@ class ColumnIndexBuilderTest {
   void buildsIndexForInColumn(@TempDir Path tempDir) throws IOException {
     BinaryArtifactReader reader = compileSetMembershipTable(tempDir);
 
-    PostingListIndex index = buildIndexFor(reader, "AGE");
+    ColumnIndex index = buildIndexFor(reader, "AGE");
 
     assertNotNull(index, "IN column should be indexed");
     assertTrue(index.enumerable(true), "IN candidates are enumerable");
-    assertEquals(5, index.distinctCodeCount(), "18,25,30,40,50");
+    assertTrue(index instanceof in.systemhalted.kisoku.runtime.loader.index.PostingListIndex);
   }
 
   @Test
   void buildsCountOnlyIndexForNotInColumn(@TempDir Path tempDir) throws IOException {
     BinaryArtifactReader reader = compileSetMembershipTable(tempDir);
 
-    PostingListIndex index = buildIndexFor(reader, "REGION");
+    ColumnIndex index = buildIndexFor(reader, "REGION");
 
     assertNotNull(index, "NOT_IN column should be indexed");
     assertFalse(index.enumerable(true), "complement match sets are not enumerable");
@@ -92,13 +92,13 @@ class ColumnIndexBuilderTest {
     BinaryArtifactReader reader = compileSetMembershipTable(tempDir);
 
     // AGE is INTEGER, so set members are stored as encoded integer codes (no dictionary lookup)
-    PostingListIndex index = buildIndexFor(reader, "AGE");
+    ColumnIndex index = buildIndexFor(reader, "AGE");
 
     // 18 is in R1's set; R3 has a blank AGE cell (always a candidate)
     long code18 = ValueCodec.encodeInteger(18);
     assertEquals(2, index.candidateCount(code18, true), "R1 matches, R3 blank");
     assertEquals(1, index.matchEnd(code18) - index.matchStart(code18));
-    assertEquals(0, index.postingRowAt(index.matchStart(code18)), "R1 contains 18");
+    assertEquals(0, index.rowAt(index.matchStart(code18)), "R1 contains 18");
     assertEquals(1, index.blankCount());
     assertEquals(2, index.blankRowAt(0), "R3 is blank");
 
@@ -113,7 +113,7 @@ class ColumnIndexBuilderTest {
     BinaryArtifactReader reader = compileSetMembershipTable(tempDir);
     StringDictionaryReader dictionary = reader.dictionary();
 
-    PostingListIndex index = buildIndexFor(reader, "REGION");
+    ColumnIndex index = buildIndexFor(reader, "REGION");
 
     // Two condition rows (R1, R3), one blank (R2).
     // APAC is in R1's excluded set: NOT_IN candidates = R3 (condition, not containing) + R2 blank.

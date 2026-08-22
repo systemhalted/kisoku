@@ -36,7 +36,7 @@ column's data must stay under 2 GB — the loader maps every column as its own b
 |--------|------|-------|-------------|
 | 0 | 4 | magic | Magic bytes: `0x4B495353` ("KISS") |
 | 4 | 2 | version_major | Format major version (currently 4) |
-| 6 | 2 | version_minor | Format minor version (currently 0) |
+| 6 | 2 | version_minor | Format minor version (currently 1) |
 | 8 | 1 | artifact_kind | 0 = PRODUCTION, 1 = TEST_INCLUSIVE |
 | 9 | 1 | rule_selection | 0 = AUTO, 1 = PRIORITY, 2 = FIRST_MATCH |
 | 10 | 2 | reserved | Reserved for future use |
@@ -46,7 +46,8 @@ column's data must stay under 2 GB — the loader maps every column as its own b
 | 28 | 8 | columns_offset | Byte offset to column definitions |
 | 36 | 8 | data_offset | Byte offset to rule data |
 | 44 | 8 | rule_order_offset | Byte offset to the rule order section |
-| 52 | 12 | reserved | Reserved for future use (zero) |
+| 52 | 8 | index_offset | Byte offset to the index directory; 0 = no persisted indexes (4.0 artifacts) |
+| 60 | 4 | reserved | Reserved for future use (zero) |
 
 ## String Dictionary
 
@@ -248,12 +249,37 @@ value means a higher priority, so `PRIORITY` 1 is evaluated before 2 — with ti
 source order and unnumbered rows sorted last. If `rule_selection = FIRST_MATCH`, rows are in
 original CSV row order.
 
+## Index Section (4.1, optional)
+
+```
+┌──────────────────────────────────────────────┐
+│ directory[column_count]:                     │
+│   block_offset (8 bytes) - 0 = no index      │
+│   block_length (8 bytes)                     │
+│ blocks... (one per indexable input column)   │
+└──────────────────────────────────────────────┘
+```
+
+Each block is the column's candidate index exactly as the runtime lays it out — a small
+integer header (`PostingListIndex`: 4 ints; `RangeIntervalIndex`: 5 ints) followed by the
+array region — so the loader constructs the index directly over a mapped slice with no
+parsing or copying. The block kind is implied by the column's operator (range operators →
+interval index, all others → posting list). Metadata, output, and test-only columns have
+no block.
+
 ## Versioning
 
 - **Major version change**: Breaking format change, old loaders cannot read new artifacts
 - **Minor version change**: Backward-compatible additions, old loaders can read new artifacts
 
-Current version: 4.0
+Current version: 4.1
+
+- **4.1**: Adds a persisted index section: the header's `index_offset` (formerly reserved
+  bytes 52–59) points at a per-column directory of `(block offset, block length)` pairs,
+  each block holding one column's candidate index byte-for-byte in its runtime layout, so
+  loading maps indexes instead of rebuilding them. Compatible both ways within major 4:
+  a 4.0 reader ignores the trailing section; a 4.1 reader builds at load when
+  `index_offset` is zero. Compiled with `CompileOptions.withPersistIndexes` (default on).
 
 - **4.0**: All section offsets (header fields and per-column `data_offset`) are 64-bit and the
   header carries an explicit `rule_order_offset`, so artifacts may exceed 2 GB; each single

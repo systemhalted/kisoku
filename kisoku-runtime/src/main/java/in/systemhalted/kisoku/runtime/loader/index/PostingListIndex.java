@@ -44,7 +44,7 @@ import java.nio.ByteBuffer;
  *
  * <p>Immutable and thread-safe: all reads go through absolute buffer gets.
  */
-public final class PostingListIndex {
+public final class PostingListIndex implements ColumnIndex {
 
   private final ByteBuffer buffer; // direct; absolute reads only
   private final Operator operator;
@@ -76,6 +76,58 @@ public final class PostingListIndex {
     this.conditionRowCount = conditionRowCount;
   }
 
+  /** Serialized block size in bytes: the 16-byte header plus the array region. */
+  public long serializedSize() {
+    return 16L + buffer.capacity();
+  }
+
+  /**
+   * Serializes this index as an artifact block: {@code distinct, postingCount, blankCount,
+   * conditionRowCount} (4 bytes each) followed by the array region byte-for-byte, so {@link
+   * #readFrom} can construct directly over a mapped slice.
+   *
+   * @param out the artifact stream
+   * @throws java.io.IOException if the stream fails
+   */
+  public void writeTo(java.io.DataOutputStream out) throws java.io.IOException {
+    out.writeInt(distinct);
+    out.writeInt(postingCount);
+    out.writeInt(blankCount);
+    out.writeInt(conditionRowCount);
+    writeBuffer(buffer, out);
+  }
+
+  /**
+   * Constructs an index over a persisted block without copying: the array region is a slice of the
+   * (typically memory-mapped) block buffer.
+   *
+   * @param block the block's bytes, starting at its 16-byte header
+   * @param operator the column's operator (from the column definition; not stored in the block)
+   * @return the index
+   */
+  public static PostingListIndex readFrom(ByteBuffer block, Operator operator) {
+    int distinct = block.getInt(0);
+    int postingCount = block.getInt(4);
+    int blankCount = block.getInt(8);
+    int conditionRowCount = block.getInt(12);
+    ByteBuffer arrays = block.slice(16, block.capacity() - 16).order(java.nio.ByteOrder.BIG_ENDIAN);
+    return new PostingListIndex(
+        arrays, operator, distinct, postingCount, blankCount, conditionRowCount);
+  }
+
+  /** Copies a buffer's full capacity to a stream in chunks. */
+  static void writeBuffer(ByteBuffer buffer, java.io.DataOutputStream out)
+      throws java.io.IOException {
+    ByteBuffer dup = buffer.duplicate();
+    dup.position(0).limit(dup.capacity());
+    byte[] chunk = new byte[1 << 16];
+    while (dup.hasRemaining()) {
+      int n = Math.min(chunk.length, dup.remaining());
+      dup.get(chunk, 0, n);
+      out.write(chunk, 0, n);
+    }
+  }
+
   /**
    * Exact number of candidate rows for this input, blanks included.
    *
@@ -83,6 +135,7 @@ public final class PostingListIndex {
    * @param present whether the input supplied a value for this column
    * @return the candidate count; 0 means no rule can match and evaluation can stop
    */
+  @Override
   public long candidateCount(long code, boolean present) {
     if (!present) {
       return blankCount;
@@ -120,6 +173,7 @@ public final class PostingListIndex {
    * @return true if {@link #matchStart(long)}/{@link #matchEnd(long)} (or the blank slice alone)
    *     cover the candidates
    */
+  @Override
   public boolean enumerable(boolean present) {
     if (!present) {
       return true;
@@ -131,14 +185,23 @@ public final class PostingListIndex {
   }
 
   /**
-   * Whether the postings slice for a supplied value is in ascending row order.
+   * {@inheritDoc}
+   *
+   * <p>Postings enumerate exactly the matching rows, so the cost equals the candidate count.
+   */
+  @Override
+  public long enumerationCost(long code, boolean present) {
+    return candidateCount(code, present);
+  }
+
+  /**
+   * {@inheritDoc}
    *
    * <p>True for single-code slices ({@code EQ}, {@code IN}); false for comparison operators, whose
    * slice spans several codes.
-   *
-   * @return true if the match slice is row-ordered
    */
-  public boolean matchSliceRowOrdered() {
+  @Override
+  public boolean enumerationRowOrdered() {
     return operator == Operator.EQ || operator == Operator.IN;
   }
 
@@ -148,6 +211,7 @@ public final class PostingListIndex {
    * @param code the input's comparable code
    * @return slice start index into the postings array
    */
+  @Override
   public int matchStart(long code) {
     return switch (operator) {
       case EQ, IN -> {
@@ -165,6 +229,7 @@ public final class PostingListIndex {
    * @param code the input's comparable code
    * @return slice end index into the postings array
    */
+  @Override
   public int matchEnd(long code) {
     return switch (operator) {
       case EQ, IN -> {
@@ -176,13 +241,8 @@ public final class PostingListIndex {
     };
   }
 
-  /**
-   * Reads a row id from the postings array.
-   *
-   * @param index postings index in [matchStart, matchEnd)
-   * @return the row id
-   */
-  public int postingRowAt(int index) {
+  @Override
+  public int rowAt(int index) {
     return buffer.getInt(postingsBase + index * 4);
   }
 
@@ -191,6 +251,7 @@ public final class PostingListIndex {
    *
    * @return the blank row count
    */
+  @Override
   public int blankCount() {
     return blankCount;
   }
@@ -201,6 +262,7 @@ public final class PostingListIndex {
    * @param index blank index in [0, blankCount)
    * @return the row id
    */
+  @Override
   public int blankRowAt(int index) {
     return buffer.getInt(blanksBase + index * 4);
   }
@@ -219,6 +281,7 @@ public final class PostingListIndex {
    *
    * @return the backing buffer's capacity in bytes (off-heap for direct buffers)
    */
+  @Override
   public long memorySizeBytes() {
     return buffer.capacity();
   }

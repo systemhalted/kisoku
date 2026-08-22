@@ -1,6 +1,6 @@
 package in.systemhalted.kisoku.runtime.loader;
 
-import in.systemhalted.kisoku.runtime.loader.index.PostingListIndex;
+import in.systemhalted.kisoku.runtime.loader.index.ColumnIndex;
 import java.util.List;
 
 /**
@@ -40,7 +40,7 @@ final class IndexedMatcher {
 
   private final List<ColumnDefinition> columns;
   private final List<ColumnDecoder> decoders;
-  private final List<PostingListIndex> columnIndexes; // positional with columns; may be null
+  private final List<ColumnIndex> columnIndexes; // positional with columns; may be null
   private final int[] inputColumnIndices; // slot -> column position
   private final boolean[] testOnlySlot; // slot -> skip during matching
   private final int[] ruleOrder; // null = identity permutation
@@ -50,7 +50,7 @@ final class IndexedMatcher {
   IndexedMatcher(
       List<ColumnDefinition> columns,
       List<ColumnDecoder> decoders,
-      List<PostingListIndex> columnIndexes,
+      List<ColumnIndex> columnIndexes,
       int[] inputColumnIndices,
       int[] ruleOrder,
       int rowCount,
@@ -86,7 +86,7 @@ final class IndexedMatcher {
         if (testOnlySlot[k]) {
           continue;
         }
-        PostingListIndex index = columnIndexes.get(inputColumnIndices[k]);
+        ColumnIndex index = columnIndexes.get(inputColumnIndices[k]);
         if (index == null) {
           continue;
         }
@@ -94,8 +94,14 @@ final class IndexedMatcher {
         if (count == 0) {
           return -1; // this column alone rules out every row
         }
-        if (count < driverCount && index.enumerable(present[k])) {
-          driverCount = count;
+        if (!index.enumerable(present[k])) {
+          continue;
+        }
+        // Drivers are chosen by enumeration cost, which can exceed the exact count when the
+        // enumeration is a superset (interval indexes enumerate one bound's side).
+        long cost = index.enumerationCost(codes[k], present[k]);
+        if (cost < driverCount) {
+          driverCount = cost;
           driverSlot = k;
         }
       }
@@ -105,7 +111,7 @@ final class IndexedMatcher {
       return linearScan(codes, present);
     }
 
-    PostingListIndex driver = columnIndexes.get(inputColumnIndices[driverSlot]);
+    ColumnIndex driver = columnIndexes.get(inputColumnIndices[driverSlot]);
     long driverCode = codes[driverSlot];
 
     if (!present[driverSlot]) {
@@ -119,7 +125,7 @@ final class IndexedMatcher {
       return -1;
     }
 
-    if (driver.matchSliceRowOrdered()) {
+    if (driver.enumerationRowOrdered()) {
       // EQ/IN driver: postings slice and blanks are both ascending - merge and stop at the first
       // full match, which is the winner.
       int s = driver.matchStart(driverCode);
@@ -128,8 +134,8 @@ final class IndexedMatcher {
       int bn = driver.blankCount();
       while (s < e || b < bn) {
         int row;
-        if (s < e && (b >= bn || driver.postingRowAt(s) < driver.blankRowAt(b))) {
-          row = driver.postingRowAt(s++);
+        if (s < e && (b >= bn || driver.rowAt(s) < driver.blankRowAt(b))) {
+          row = driver.rowAt(s++);
         } else {
           row = driver.blankRowAt(b++);
         }
@@ -150,7 +156,7 @@ final class IndexedMatcher {
     int s = driver.matchStart(driverCode);
     int e = driver.matchEnd(driverCode);
     for (int i = s; i < e; i++) {
-      int row = driver.postingRowAt(i);
+      int row = driver.rowAt(i);
       if (row < min && matchesAllInputs(codes, present, row)) {
         min = row;
       }

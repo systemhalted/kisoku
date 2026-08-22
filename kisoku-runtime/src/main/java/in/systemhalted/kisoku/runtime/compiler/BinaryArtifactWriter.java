@@ -34,7 +34,17 @@ final class BinaryArtifactWriter {
    */
   static final short VERSION_MAJOR = 4;
 
-  static final short VERSION_MINOR = 0;
+  /**
+   * Minor version 1 adds an {@code index_offset} header field (bytes 52-59, zero in 4.0 artifacts)
+   * pointing at a per-column index directory, so candidate indexes built at compile time are
+   * memory-mapped at load instead of rebuilt. Backward and forward compatible within major 4: a 4.0
+   * reader ignores the trailing index section, and a 4.1 reader treats a zero offset as "no
+   * persisted indexes" and builds them at load.
+   */
+  static final short VERSION_MINOR = 1;
+
+  /** Bytes per index-directory entry: block offset (8) + block length (8); zeros = no index. */
+  static final int INDEX_DIRECTORY_ENTRY_SIZE = 16;
 
   static final int HEADER_SIZE = 64;
 
@@ -61,6 +71,7 @@ final class BinaryArtifactWriter {
    * @param columnsOffset byte offset of the column definitions section
    * @param dataOffset byte offset of the rule data section
    * @param ruleOrderOffset byte offset of the rule order section
+   * @param indexOffset byte offset of the index directory, or 0 when indexes are not persisted
    * @throws IOException if the stream fails
    */
   static void writeHeader(
@@ -72,7 +83,8 @@ final class BinaryArtifactWriter {
       long dictionaryOffset,
       long columnsOffset,
       long dataOffset,
-      long ruleOrderOffset)
+      long ruleOrderOffset,
+      long indexOffset)
       throws IOException {
     dos.writeInt(MAGIC); // 0-3: magic
     dos.writeShort(VERSION_MAJOR); // 4-5: version_major
@@ -86,8 +98,8 @@ final class BinaryArtifactWriter {
     dos.writeLong(columnsOffset); // 28-35: columns_offset
     dos.writeLong(dataOffset); // 36-43: data_offset
     dos.writeLong(ruleOrderOffset); // 44-51: rule_order_offset
-    dos.writeInt(0); // 52-55: reserved
-    dos.writeLong(0L); // 56-63: reserved
+    dos.writeLong(indexOffset); // 52-59: index_offset (0 = no persisted indexes)
+    dos.writeInt(0); // 60-63: reserved
   }
 
   /**

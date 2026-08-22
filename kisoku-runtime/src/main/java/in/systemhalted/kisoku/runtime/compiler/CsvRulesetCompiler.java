@@ -15,13 +15,18 @@ import in.systemhalted.kisoku.api.evaluation.RuleSelectionPolicy;
 import in.systemhalted.kisoku.runtime.codec.ValueCodec;
 import in.systemhalted.kisoku.runtime.csv.Operator;
 import in.systemhalted.kisoku.runtime.csv.StreamingCsvRowReader;
+import in.systemhalted.kisoku.runtime.loader.index.PostingListIndexBuilder;
+import in.systemhalted.kisoku.runtime.loader.index.RangeIntervalIndex;
 import java.io.BufferedOutputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
+import java.io.OutputStream;
 import java.nio.ByteBuffer;
+import java.nio.channels.FileChannel;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -103,7 +108,8 @@ public final class CsvRulesetCompiler implements RulesetCompiler {
           first.scales,
           totals,
           evalToSource,
-          tempDir);
+          tempDir,
+          options.isPersistIndexes());
     } finally {
       deleteRecursively(tempDir);
     }
@@ -350,7 +356,8 @@ public final class CsvRulesetCompiler implements RulesetCompiler {
       int[] scales,
       ColumnTotals totals,
       int[] evalToSource,
-      Path tempDir)
+      Path tempDir,
+      boolean persistIndexes)
       throws IOException {
     byte[] dictionaryBytes = dictionary.serialize();
 
@@ -378,10 +385,18 @@ public final class CsvRulesetCompiler implements RulesetCompiler {
     long dataOffset =
         columnsOffset + (long) columns.size() * BinaryArtifactWriter.COLUMN_DEFINITION_SIZE;
     long ruleOrderOffset = dataOffset + dataSize;
+    // The rule-order section is a single identity byte, so the index directory's position is
+    // known before anything is written; block offsets are recorded while writing and patched
+    // into the directory afterward.
+    long indexOffset = persistIndexes ? ruleOrderOffset + 1 : 0;
 
-    try (DataOutputStream dos =
-        new DataOutputStream(
-            new BufferedOutputStream(Files.newOutputStream(artifactFile), 1 << 16))) {
+    long[] blockOffsets = new long[columns.size()];
+    long[] blockLengths = new long[columns.size()];
+
+    try (CountingOutputStream counting =
+            new CountingOutputStream(
+                new BufferedOutputStream(Files.newOutputStream(artifactFile), 1 << 16));
+        DataOutputStream dos = new DataOutputStream(counting)) {
       BinaryArtifactWriter.writeHeader(
           dos,
           artifactKind,
@@ -391,7 +406,8 @@ public final class CsvRulesetCompiler implements RulesetCompiler {
           dictionaryOffset,
           columnsOffset,
           dataOffset,
-          ruleOrderOffset);
+          ruleOrderOffset,
+          indexOffset);
       dos.write(dictionaryBytes);
 
       for (int c = 0; c < columns.size(); c++) {
@@ -409,11 +425,87 @@ public final class CsvRulesetCompiler implements RulesetCompiler {
 
       for (int c = 0; c < columns.size(); c++) {
         writeColumn(dos, columns.get(c), c, rowCount, bitmapSize, evalToSource, tempDir);
-        Files.delete(columnTemp(tempDir, c)); // free disk as we go
+        if (!persistIndexes) {
+          Files.delete(columnTemp(tempDir, c)); // free disk as we go
+        }
       }
 
       // Rows are physically stored in evaluation order, so the order is the identity.
       dos.writeByte(BinaryArtifactWriter.RULE_ORDER_IDENTITY);
+
+      if (persistIndexes) {
+        // Directory placeholder, patched with (offset, length) entries once blocks are written.
+        byte[] zeros = new byte[BinaryArtifactWriter.INDEX_DIRECTORY_ENTRY_SIZE];
+        for (int c = 0; c < columns.size(); c++) {
+          dos.write(zeros);
+        }
+        for (int c = 0; c < columns.size(); c++) {
+          long start = counting.position();
+          boolean written =
+              writeColumnIndex(dos, columns.get(c), c, rowCount, evalToSource, tempDir);
+          if (written) {
+            blockOffsets[c] = start;
+            blockLengths[c] = counting.position() - start;
+          }
+          Files.delete(columnTemp(tempDir, c));
+        }
+      }
+    }
+
+    if (persistIndexes) {
+      patchIndexDirectory(artifactFile, indexOffset, blockOffsets, blockLengths);
+    }
+  }
+
+  /** Overwrites the index directory placeholder with the real block offsets and lengths. */
+  private void patchIndexDirectory(
+      Path artifactFile, long indexOffset, long[] blockOffsets, long[] blockLengths)
+      throws IOException {
+    ByteBuffer directory =
+        ByteBuffer.allocate(blockOffsets.length * BinaryArtifactWriter.INDEX_DIRECTORY_ENTRY_SIZE);
+    for (int c = 0; c < blockOffsets.length; c++) {
+      directory.putLong(blockOffsets[c]);
+      directory.putLong(blockLengths[c]);
+    }
+    directory.flip();
+    try (FileChannel channel = FileChannel.open(artifactFile, StandardOpenOption.WRITE)) {
+      channel.write(directory, indexOffset);
+    }
+  }
+
+  /** Output stream that tracks its absolute byte position (64-bit, unlike DataOutputStream). */
+  private static final class CountingOutputStream extends OutputStream {
+    private final OutputStream delegate;
+    private long position;
+
+    CountingOutputStream(OutputStream delegate) {
+      this.delegate = delegate;
+    }
+
+    long position() {
+      return position;
+    }
+
+    @Override
+    public void write(int b) throws IOException {
+      delegate.write(b);
+      position++;
+    }
+
+    @Override
+    public void write(byte[] b, int off, int len) throws IOException {
+      delegate.write(b, off, len);
+      position += len;
+    }
+
+    @Override
+    public void flush() throws IOException {
+      delegate.flush();
+    }
+
+    @Override
+    public void close() throws IOException {
+      delegate.close();
     }
   }
 
@@ -447,27 +539,7 @@ public final class CsvRulesetCompiler implements RulesetCompiler {
       throws IOException {
     byte[] temp = Files.readAllBytes(columnTemp(tempDir, c));
     ByteBuffer buf = ByteBuffer.wrap(temp);
-
-    // Index record starts (records are self-describing).
-    int[] recStart = new int[rowCount];
-    int pos = 0;
-    for (int r = 0; r < rowCount; r++) {
-      recStart[r] = pos;
-      boolean present = temp[pos] == 1;
-      pos += 1;
-      if (!present) {
-        continue;
-      }
-      if (col.operator == Operator.RULE_ID) {
-        pos += 2 + (buf.getShort(pos) & 0xFFFF);
-      } else if (col.operator == Operator.IN || col.operator == Operator.NOT_IN) {
-        pos += 2 + 8 * (buf.getShort(pos) & 0xFFFF);
-      } else if (isRangeOperator(col.operator)) {
-        pos += 16;
-      } else {
-        pos += 8;
-      }
-    }
+    int[] recStart = recordStarts(temp, buf, col, rowCount);
 
     // Presence bitmap (MSB-first), in evaluation order.
     byte[] bitmap = new byte[bitmapSize];
@@ -532,6 +604,108 @@ public final class CsvRulesetCompiler implements RulesetCompiler {
         int src = evalToSource != null ? evalToSource[d] : d;
         dos.writeLong(temp[recStart[src]] == 1 ? buf.getLong(recStart[src] + 1) : 0L);
       }
+    }
+  }
+
+  /** Locates each row's record start in a column temporary (records are self-describing). */
+  private int[] recordStarts(byte[] temp, ByteBuffer buf, ColumnInfo col, int rowCount) {
+    int[] recStart = new int[rowCount];
+    int pos = 0;
+    for (int r = 0; r < rowCount; r++) {
+      recStart[r] = pos;
+      boolean present = temp[pos] == 1;
+      pos += 1;
+      if (!present) {
+        continue;
+      }
+      if (col.operator == Operator.RULE_ID) {
+        pos += 2 + (buf.getShort(pos) & 0xFFFF);
+      } else if (col.operator == Operator.IN || col.operator == Operator.NOT_IN) {
+        pos += 2 + 8 * (buf.getShort(pos) & 0xFFFF);
+      } else if (isRangeOperator(col.operator)) {
+        pos += 16;
+      } else {
+        pos += 8;
+      }
+    }
+    return recStart;
+  }
+
+  /**
+   * Builds one column's candidate index from its temporary file (rows fed in evaluation order) and
+   * serializes it as an artifact block.
+   *
+   * <p>The same operator coverage as load-time building: scalar comparisons and equality, set
+   * membership, and range intervals; metadata, output, and test-only columns are skipped.
+   *
+   * @return true if a block was written
+   */
+  private boolean writeColumnIndex(
+      DataOutputStream dos, ColumnInfo col, int c, int rowCount, int[] evalToSource, Path tempDir)
+      throws IOException {
+    if (resolveColumnRole(col.operator) != 0 || col.isTestColumn) {
+      return false;
+    }
+
+    boolean scalar =
+        switch (col.operator) {
+          case EQ, NE, GT, GTE, LT, LTE -> true;
+          default -> false;
+        };
+    boolean set = col.operator == Operator.IN || col.operator == Operator.NOT_IN;
+    boolean range = isRangeOperator(col.operator);
+    if (!scalar && !set && !range) {
+      return false;
+    }
+
+    byte[] temp = Files.readAllBytes(columnTemp(tempDir, c));
+    ByteBuffer buf = ByteBuffer.wrap(temp);
+    int[] recStart = recordStarts(temp, buf, col, rowCount);
+
+    int conditionRows = 0;
+    for (int r = 0; r < rowCount; r++) {
+      if (temp[recStart[r]] == 1) {
+        conditionRows++;
+      }
+    }
+
+    try {
+      if (range) {
+        long[] mins = new long[rowCount];
+        long[] maxs = new long[rowCount];
+        byte[] presence = new byte[(rowCount + 7) / 8];
+        for (int d = 0; d < rowCount; d++) {
+          int src = evalToSource != null ? evalToSource[d] : d;
+          if (temp[recStart[src]] == 1) {
+            presence[d / 8] |= (byte) (1 << (7 - (d % 8)));
+            mins[d] = buf.getLong(recStart[src] + 1);
+            maxs[d] = buf.getLong(recStart[src] + 9);
+          }
+        }
+        RangeIntervalIndex.build(mins, maxs, presence, col.operator, rowCount).writeTo(dos);
+        return true;
+      }
+
+      PostingListIndexBuilder builder =
+          new PostingListIndexBuilder(col.operator, conditionRows, conditionRows);
+      for (int d = 0; d < rowCount; d++) {
+        int src = evalToSource != null ? evalToSource[d] : d;
+        if (temp[recStart[src]] != 1) {
+          builder.addBlank(d);
+        } else if (scalar) {
+          builder.addPair(buf.getLong(recStart[src] + 1), d);
+        } else {
+          int count = buf.getShort(recStart[src] + 1) & 0xFFFF;
+          for (int i = 0; i < count; i++) {
+            builder.addPair(buf.getLong(recStart[src] + 3 + i * 8), d);
+          }
+        }
+      }
+      builder.build().writeTo(dos);
+      return true;
+    } catch (IllegalStateException e) {
+      throw new CompilationException(
+          "Index for column '" + col.name + "' cannot be persisted: " + e.getMessage(), e);
     }
   }
 

@@ -196,8 +196,10 @@ Supported `ColumnType`s (see [Schema API](#schema-api)):
   Avoid collisions with user-defined column names.
 - `LoadOptions`: `memoryMap()` (off-heap; true file-backed mmap) or `onHeap()`,
   plus `withPrewarmIndexes(boolean)` and `withIncludeTestColumns(boolean)`.
-  Indexes cover `EQ`, `NE`, `GT`, `GTE`, `LT`, `LTE`, `IN`, and `NOT_IN` columns
-  (`NE`/`NOT_IN` for candidate counting only).
+  Indexes cover every operator: `EQ`, `NE`, `GT`, `GTE`, `LT`, `LTE`, `IN`, `NOT_IN`,
+  and the `BETWEEN_*`/`NOT_BETWEEN_*` ranges (negative operators for candidate counting
+  only). Indexes are persisted in the artifact by default
+  (`CompileOptions.withPersistIndexes`) and memory-mapped at load.
 - Bulk evaluation runs on the columnar kernel; the executor-parallel overload
   partitions the batch into disjoint chunks with identical results. The engine
   never creates its own threads - parallelism is caller-owned.

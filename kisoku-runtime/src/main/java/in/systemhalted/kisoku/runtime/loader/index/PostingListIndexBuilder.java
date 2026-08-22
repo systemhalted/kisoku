@@ -135,11 +135,20 @@ public final class PostingListIndexBuilder {
     return new PostingListIndex(buffer, operator, distinct, unique, blankCount, conditionRowCount);
   }
 
-  /**
-   * Bottom-up stable merge sort of (codes, rows) by code. Stability preserves the ascending row
-   * order within each code that the insertion order guarantees.
-   */
   private void stableSortByCode() {
+    stableSortByCode(codes, rows, pairCount);
+  }
+
+  /**
+   * Bottom-up stable merge sort of parallel (codes, rows) arrays by code. Stability preserves the
+   * ascending row order within each code that the insertion order guarantees.
+   *
+   * @param codes sort keys, permuted in place
+   * @param rows values permuted alongside their keys
+   * @param count number of leading entries to sort
+   */
+  static void stableSortByCode(long[] codes, int[] rows, int count) {
+    int pairCount = count;
     if (pairCount < 2) {
       return;
     }

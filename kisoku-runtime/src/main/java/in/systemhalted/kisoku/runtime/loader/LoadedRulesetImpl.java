@@ -8,7 +8,7 @@ import in.systemhalted.kisoku.api.evaluation.EvaluationException;
 import in.systemhalted.kisoku.api.evaluation.MatchDiagnostics;
 import in.systemhalted.kisoku.api.loading.LoadedRuleset;
 import in.systemhalted.kisoku.runtime.csv.Operator;
-import in.systemhalted.kisoku.runtime.loader.index.PostingListIndex;
+import in.systemhalted.kisoku.runtime.loader.index.ColumnIndex;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -38,7 +38,7 @@ final class LoadedRulesetImpl implements LoadedRuleset {
   private final int ruleIdColumnIndex;
 
   // Indexed evaluation support
-  private final List<PostingListIndex> columnIndexes; // May be null if indexing disabled
+  private final List<ColumnIndex> columnIndexes; // May be null if indexing disabled
   private final IndexedMatcher matcher;
   private final ColumnarBulkKernel kernel;
   private final boolean includeTestColumns;
@@ -51,7 +51,7 @@ final class LoadedRulesetImpl implements LoadedRuleset {
       int[] ruleOrder,
       int rowCount,
       ByteBuffer directBuffer,
-      List<PostingListIndex> columnIndexes,
+      List<ColumnIndex> columnIndexes,
       StringDictionaryReader dictionary) {
     this(
         metadata,
@@ -74,7 +74,7 @@ final class LoadedRulesetImpl implements LoadedRuleset {
       int rowCount,
       ByteBuffer directBuffer,
       AutoCloseable resource,
-      List<PostingListIndex> columnIndexes,
+      List<ColumnIndex> columnIndexes,
       StringDictionaryReader dictionary,
       boolean includeTestColumns) {
     this.metadata = metadata;

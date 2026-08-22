@@ -8,7 +8,7 @@ import in.systemhalted.kisoku.api.loading.LoadedRuleset;
 import in.systemhalted.kisoku.api.loading.RulesetLoader;
 import in.systemhalted.kisoku.runtime.compiler.CompiledRulesetImpl;
 import in.systemhalted.kisoku.runtime.csv.Operator;
-import in.systemhalted.kisoku.runtime.loader.index.PostingListIndex;
+import in.systemhalted.kisoku.runtime.loader.index.ColumnIndex;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
@@ -94,9 +94,13 @@ public final class CsvRulesetLoader implements RulesetLoader {
       LoadOptions options,
       RulesetMetadata metadata) {
     StringDictionaryReader dictionary = reader.dictionary();
-    List<PostingListIndex> indexes = null;
+    List<ColumnIndex> indexes = null;
     if (options.isPrewarmIndexes()) {
-      indexes = buildIndexes(reader.columns(), reader.decoders(), reader.rowCount());
+      // Prefer indexes persisted in the artifact (mapped, no build cost); fall back to building.
+      indexes = reader.persistedIndexes();
+      if (indexes == null) {
+        indexes = buildIndexes(reader.columns(), reader.decoders(), reader.rowCount());
+      }
     }
 
     return new LoadedRulesetImpl(
@@ -140,12 +144,12 @@ public final class CsvRulesetLoader implements RulesetLoader {
    * @param rowCount total number of rows
    * @return list of indexes (same size as columns, null for non-indexed columns)
    */
-  private List<PostingListIndex> buildIndexes(
+  private List<ColumnIndex> buildIndexes(
       List<ColumnDefinition> columns, List<ColumnDecoder> decoders, int rowCount) {
-    List<PostingListIndex> indexes = new ArrayList<>(columns.size());
+    List<ColumnIndex> indexes = new ArrayList<>(columns.size());
 
     for (int i = 0; i < columns.size(); i++) {
-      PostingListIndex index = ColumnIndexBuilder.build(decoders.get(i), columns.get(i), rowCount);
+      ColumnIndex index = ColumnIndexBuilder.build(decoders.get(i), columns.get(i), rowCount);
       indexes.add(index); // May be null for non-indexed columns
     }
 

@@ -65,19 +65,21 @@ class OffHeapMemoryTest {
     MemorySnapshot beforeLoad = MemoryTestUtils.stableSnapshot();
     System.out.printf("Before memoryMap load: %s%n", beforeLoad.format());
 
+    long mappedBefore = MemoryTestUtils.mappedBufferBytes();
     try (LoadedRuleset ruleset = loader.load(compiled, LoadOptions.memoryMap())) {
       MemorySnapshot afterLoad = MemoryTestUtils.stableSnapshot();
-      System.out.printf("After memoryMap load: %s%n", afterLoad.format());
+      long mappedAfter = MemoryTestUtils.mappedBufferBytes();
+      System.out.printf(
+          "After memoryMap load: %s, mapped delta: %s%n",
+          afterLoad.format(), MemoryTestUtils.formatBytes(mappedAfter - mappedBefore));
 
-      long directDelta = afterLoad.directBytes() - beforeLoad.directBytes();
-      System.out.printf("Direct buffer delta: %s%n", MemoryTestUtils.formatBytes(directDelta));
-
+      // A memory-mapped load keeps the artifact off-heap in the "mapped" buffer pool. (Persisted
+      // indexes are mapped too, so a mmap load may allocate no "direct" buffers at all.)
       assertTrue(
-          afterLoad.directCount() > beforeLoad.directCount()
-              || afterLoad.directBytes() > beforeLoad.directBytes(),
+          mappedAfter > mappedBefore,
           String.format(
-              "memoryMap() should allocate direct buffers. Before: %d buffers, After: %d buffers",
-              beforeLoad.directCount(), afterLoad.directCount()));
+              "memoryMap() should map the artifact off-heap. Mapped bytes before: %d, after: %d",
+              mappedBefore, mappedAfter));
     }
   }
 

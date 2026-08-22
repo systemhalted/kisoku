@@ -26,6 +26,7 @@ final class RangeColumnDecoder implements ColumnDecoder {
   private final int bitmapBase;
   private final int minBase;
   private final int maxBase;
+  private final int rowCount;
   private final StringDictionaryReader dictionary;
 
   private RangeColumnDecoder(
@@ -34,12 +35,14 @@ final class RangeColumnDecoder implements ColumnDecoder {
       int bitmapBase,
       int minBase,
       int maxBase,
+      int rowCount,
       StringDictionaryReader dictionary) {
     this.column = column;
     this.buffer = buffer;
     this.bitmapBase = bitmapBase;
     this.minBase = minBase;
     this.maxBase = maxBase;
+    this.rowCount = rowCount;
     this.dictionary = dictionary;
   }
 
@@ -60,7 +63,7 @@ final class RangeColumnDecoder implements ColumnDecoder {
       StringDictionaryReader dictionary) {
     int minBase = base + BitMapUtils.bitmapSize(rowCount);
     int maxBase = minBase + rowCount * 8;
-    return new RangeColumnDecoder(column, buffer, base, minBase, maxBase, dictionary);
+    return new RangeColumnDecoder(column, buffer, base, minBase, maxBase, rowCount, dictionary);
   }
 
   @Override
@@ -108,6 +111,49 @@ final class RangeColumnDecoder implements ColumnDecoder {
   public Object getValue(int rowIndex) {
     // Range columns are input-only, not used for output
     return null;
+  }
+
+  // Package-private accessors for index building. These materialize the column's raw data from the
+  // buffer on demand; they are used once at build time and the arrays are not retained.
+
+  /**
+   * Materializes the min-bound codes for index building.
+   *
+   * @return one code per row
+   */
+  long[] mins() {
+    long[] out = new long[rowCount];
+    for (int i = 0; i < rowCount; i++) {
+      out[i] = buffer.getLong(minBase + i * 8);
+    }
+    return out;
+  }
+
+  /**
+   * Materializes the max-bound codes for index building.
+   *
+   * @return one code per row
+   */
+  long[] maxs() {
+    long[] out = new long[rowCount];
+    for (int i = 0; i < rowCount; i++) {
+      out[i] = buffer.getLong(maxBase + i * 8);
+    }
+    return out;
+  }
+
+  /**
+   * Materializes the presence bitmap for index building.
+   *
+   * @return the presence bitmap (MSB-first encoding)
+   */
+  byte[] presenceBitmap() {
+    int size = BitMapUtils.bitmapSize(rowCount);
+    byte[] out = new byte[size];
+    for (int i = 0; i < size; i++) {
+      out[i] = buffer.get(bitmapBase + i);
+    }
+    return out;
   }
 
   @Override
