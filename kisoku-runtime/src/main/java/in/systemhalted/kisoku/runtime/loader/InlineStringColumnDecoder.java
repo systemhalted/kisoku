@@ -62,6 +62,12 @@ final class InlineStringColumnDecoder implements ColumnDecoder {
   }
 
   @Override
+  public String describeOperand(int rowIndex) {
+    Object value = getValue(rowIndex);
+    return value != null ? value.toString() : null;
+  }
+
+  @Override
   public Object getValue(int rowIndex) {
     if (!hasCondition(rowIndex)) {
       return null;

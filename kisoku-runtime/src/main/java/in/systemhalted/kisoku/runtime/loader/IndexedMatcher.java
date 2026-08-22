@@ -53,7 +53,8 @@ final class IndexedMatcher {
       List<PostingListIndex> columnIndexes,
       int[] inputColumnIndices,
       int[] ruleOrder,
-      int rowCount) {
+      int rowCount,
+      boolean includeTestColumns) {
     this.columns = columns;
     this.decoders = decoders;
     this.columnIndexes = columnIndexes;
@@ -62,9 +63,10 @@ final class IndexedMatcher {
     this.rowCount = rowCount;
     this.identityOrder = ruleOrder == null;
 
+    // With test columns included, no slot is skipped: test input columns match like any other.
     this.testOnlySlot = new boolean[inputColumnIndices.length];
     for (int k = 0; k < inputColumnIndices.length; k++) {
-      testOnlySlot[k] = columns.get(inputColumnIndices[k]).isTestOnly();
+      testOnlySlot[k] = !includeTestColumns && columns.get(inputColumnIndices[k]).isTestOnly();
     }
   }
 

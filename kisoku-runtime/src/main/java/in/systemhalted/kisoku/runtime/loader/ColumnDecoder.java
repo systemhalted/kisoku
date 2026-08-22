@@ -63,6 +63,15 @@ sealed interface ColumnDecoder
   Object getValue(int rowIndex);
 
   /**
+   * Renders this row's stored operand for diagnostics (e.g. {@code "42"}, {@code "(18,65)"}, {@code
+   * "(APAC,EMEA)"}).
+   *
+   * @param rowIndex the row index
+   * @return the operand text, or null when the cell is blank
+   */
+  String describeOperand(int rowIndex);
+
+  /**
    * Factory method to create the appropriate decoder for a column.
    *
    * @param column the column definition

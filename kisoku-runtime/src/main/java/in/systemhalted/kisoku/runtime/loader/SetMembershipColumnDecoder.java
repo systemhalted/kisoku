@@ -129,6 +129,25 @@ final class SetMembershipColumnDecoder implements ColumnDecoder {
     return null;
   }
 
+  @Override
+  public String describeOperand(int rowIndex) {
+    if (!hasCondition(rowIndex)) {
+      return null;
+    }
+    int offset = listOffset(rowIndex);
+    int length = listLength(rowIndex);
+    StringBuilder out = new StringBuilder("(");
+    for (int i = 0; i < length; i++) {
+      if (i > 0) {
+        out.append(',');
+      }
+      out.append(
+          TypeCoercion.decodeValue(
+              setValue(offset + i), column.type(), column.scale(), dictionary));
+    }
+    return out.append(')').toString();
+  }
+
   // Package-private accessors for index building. These materialize the column's raw data from the
   // buffer on demand; they are used once at load time and the arrays are not retained.
 

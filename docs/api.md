@@ -66,7 +66,10 @@ public interface RulesetLoader {
 
 public interface LoadedRuleset extends AutoCloseable {
   DecisionOutput evaluate(DecisionInput input);
+  DecisionOutput explain(DecisionInput input); // evaluate + MatchDiagnostics
   BulkResult evaluateBulk(DecisionInput base, List<DecisionInput> variants);
+  BulkResult evaluateBulk(DecisionInput base, List<DecisionInput> variants,
+                          Executor executor, int parallelism); // caller-supplied threads
   RulesetMetadata metadata();
   @Override void close();
 }
@@ -191,9 +194,29 @@ Supported `ColumnType`s (see [Schema API](#schema-api)):
     deterministic row order (first-match).
 - Reserved column names and keywords defined by the library are ALL CAPS.
   Avoid collisions with user-defined column names.
-- `LoadOptions`: `memoryMap()` (off-heap; true file-backed mmap when used with
-  `load(Path)`) or `onHeap()`, plus `withPrewarmIndexes(boolean)`. Indexes cover
-  `EQ`, `GT`, `GTE`, `LT`, `LTE`, `IN`, and `NOT_IN` columns.
+- `LoadOptions`: `memoryMap()` (off-heap; true file-backed mmap) or `onHeap()`,
+  plus `withPrewarmIndexes(boolean)` and `withIncludeTestColumns(boolean)`.
+  Indexes cover `EQ`, `NE`, `GT`, `GTE`, `LT`, `LTE`, `IN`, and `NOT_IN` columns
+  (`NE`/`NOT_IN` for candidate counting only).
+- Bulk evaluation runs on the columnar kernel; the executor-parallel overload
+  partitions the batch into disjoint chunks with identical results. The engine
+  never creates its own threads - parallelism is caller-owned.
+- `explain(input)` evaluates like `evaluate` and attaches `MatchDiagnostics`:
+  the winning rule's non-blank conditions rendered as
+  `"NAME OPERATOR operand"` (e.g. `"AGE BETWEEN_INCLUSIVE (18,65)"`). Slower
+  than `evaluate`; meant for authoring, debugging, and audit trails.
+
+## Validation Coverage
+
+`RulesetValidator` reports, with row/column context: structural issues (missing header or
+operator rows, ragged rows, missing `RULE_ID`, no output column, rows with no output value),
+schema issues (undeclared columns, operands that don't parse as the column's declared type),
+and semantic issues (duplicate `RULE_ID`s, blank or non-integer `PRIORITY` where the column
+exists, ranges with min above max, sets over 65,535 members, timestamps finer than
+microseconds). Issue collection caps at 1,000; duplicate tracking is memory-bounded and says
+so if truncated. Validation is an authoring-time gate — the compiler enforces what
+correctness requires but stays lenient where the validator advises (for example, a blank
+`PRIORITY` compiles and ranks last).
 
 ## Errors
 - `ValidationException` for schema/test-cell errors.
@@ -318,10 +341,13 @@ Columns prefixed with `TEST_` are test-only columns with special handling:
 |-------|----------|
 | Validation | Validated like regular columns; must be in schema |
 | Compilation | Included in artifact with flag `0x02` |
-| Loading | Loaded into memory but marked as test columns |
-| Evaluation | **Excluded** from output; never returned in `DecisionOutput.outputs()` |
+| Loading | Loaded but excluded from evaluation by default; `LoadOptions.withIncludeTestColumns(true)` opts them in |
+| Evaluation (default) | Test input columns don't constrain matching; test outputs never appear in `DecisionOutput.outputs()` |
+| Evaluation (included) | Test input columns match like any other; test outputs surface in `outputs()` |
 
-**Use case**: Include expected values for validation testing without polluting production outputs.
+**Use case**: Include expected values for validation testing without polluting production
+outputs — then run the same production artifact with test columns included to check the
+table's embedded expectations against real inputs (PRD FR2).
 
 ```csv
 RULE_ID,AGE,DISCOUNT,TEST_EXPECTED_SEGMENT

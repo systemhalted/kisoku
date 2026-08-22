@@ -115,6 +115,15 @@ final class ScalarColumnDecoder implements ColumnDecoder {
     return TypeCoercion.decodeValue(valueAt(rowIndex), column.type(), column.scale(), dictionary);
   }
 
+  @Override
+  public String describeOperand(int rowIndex) {
+    if (!hasCondition(rowIndex)) {
+      return null;
+    }
+    return String.valueOf(
+        TypeCoercion.decodeValue(valueAt(rowIndex), column.type(), column.scale(), dictionary));
+  }
+
   // Package-private accessors for index building. These materialize the column's raw data from the
   // buffer on demand; they are used once at load time and the arrays are not retained.
 

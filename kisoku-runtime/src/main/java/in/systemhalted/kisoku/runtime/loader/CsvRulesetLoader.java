@@ -108,7 +108,8 @@ public final class CsvRulesetLoader implements RulesetLoader {
         null,
         resource,
         indexes,
-        dictionary);
+        dictionary,
+        options.isIncludeTestColumns());
   }
 
   /** Reconstructs ruleset metadata from a parsed artifact (used when loading from a file). */

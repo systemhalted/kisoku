@@ -109,4 +109,18 @@ final class RangeColumnDecoder implements ColumnDecoder {
     // Range columns are input-only, not used for output
     return null;
   }
+
+  @Override
+  public String describeOperand(int rowIndex) {
+    if (!hasCondition(rowIndex)) {
+      return null;
+    }
+    long min = buffer.getLong(minBase + rowIndex * 8);
+    long max = buffer.getLong(maxBase + rowIndex * 8);
+    return "("
+        + TypeCoercion.decodeValue(min, column.type(), column.scale(), dictionary)
+        + ","
+        + TypeCoercion.decodeValue(max, column.type(), column.scale(), dictionary)
+        + ")";
+  }
 }

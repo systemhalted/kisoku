@@ -33,7 +33,7 @@ Both `scale` and `memory` tags are excluded by default for fast feedback.
 
 Kisoku is a Java decision-table rule engine that compiles large decision tables into an execution-optimized form, supports indexed evaluation, and provides deterministic results for single and bulk inputs.
 
-**Current status**: Under development, but the core lifecycle is implemented end to end: CSV parsing/validation, compilation to the binary artifact, file persistence (`writeTo(Path)`) and memory-mapped reload (`load(Path)`), and indexed evaluation (EQ, GT, GTE, LT, LTE, IN, NOT_IN). An internal scalar columnar bulk kernel exists (package-private, not yet public API). See `docs/getting-started.md` for usage and `docs/artifact-format.md` for the binary format.
+**Current status**: The core lifecycle is implemented end to end: streaming CSV validation and compilation (heap independent of table size), file-backed artifacts with 64-bit offsets (may exceed 2 GB), memory-mapped loading with off-heap posting-list indexes (EQ, NE, GT, GTE, LT, LTE, IN, NOT_IN; ranges verify-only), and evaluation - single (`evaluate`/`explain` with diagnostics), bulk on the columnar kernel (sequential and executor-parallel), with optional TEST_ column participation via `LoadOptions.withIncludeTestColumns(true)`. JSON/database sources are a later phase. See `docs/getting-started.md` for usage and `docs/artifact-format.md` for the binary format.
 
 ## Architecture
 

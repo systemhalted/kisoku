@@ -27,7 +27,11 @@ under 1 GB with bounded per-evaluation working set.
 - Reserved column names and keywords defined by the library are ALL CAPS.
 - Column roles are determined by the operator row: `SET` marks outputs, all
   other operators are inputs.
-- Test-only columns are prefixed with `TEST_`.
+- Test-only columns are prefixed with `TEST_`. They are always compiled into the
+  artifact (flag `0x02`) and excluded from evaluation by default;
+  `LoadOptions.withIncludeTestColumns(true)` opts them in, so test input columns
+  match and test output columns surface - the mode for running a table's
+  embedded expectations against real inputs.
 - Reserved columns include `RULE_ID` and `PRIORITY` (default priority column, configurable via `CompileOptions`).
 - CSV sources use two header rows: names, then operators (fixed per column).
 
@@ -149,9 +153,13 @@ Range operators (`BETWEEN_*`) are not yet indexed and fall back to verification.
 - Return `DecisionOutput` with `ruleId()` and `outputs()` (plus optional
   diagnostics).
 
-A separate internal scalar **columnar bulk kernel** (ADR-0010, package-private)
-scores pre-coerced columnar batches for high-volume throughput; it is not yet
-public API. The public bulk entry point remains `LoadedRuleset.evaluateBulk`.
+Bulk evaluation runs on the scalar **columnar bulk kernel** (ADR-0010): inputs
+are coerced once into a columnar batch and each row is resolved by the same
+matcher as single evaluation, so bulk/single parity is structural. The public
+entry points are `LoadedRuleset.evaluateBulk(base, variants)` and the
+executor-parallel overload `evaluateBulk(base, variants, executor, parallelism)`
+(the engine never creates its own threads). `LoadedRuleset.explain` returns the
+winning rule's rendered conditions as `MatchDiagnostics`.
 
 ## Concurrency and Isolation
 - Loaded rulesets are immutable; no shared mutable state during evaluation.

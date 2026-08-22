@@ -657,3 +657,34 @@ With §9 (indexes), §10 (dictionary/RULE_ID), and this change, every scale find
 closed except one optional item: **compile-time index persistence** — indexes are still built
 at load time (12–13 s at 5M rows against a 60 s target), so persisting them into the
 artifact remains a load-time optimization, not a blocker.
+
+
+---
+
+## 12. Implementation completions (post-scale work)
+
+With the scale work done, the remaining *declared-but-unfinished* surface was completed:
+
+- **Public bulk API on the columnar kernel** (closes the "package-private, not yet public
+  API" status from ADR-0010 and CLAUDE.md): `evaluateBulk` now encodes the batch once and
+  runs on the kernel, and a new overload `evaluateBulk(base, variants, executor,
+  parallelism)` partitions the batch across a caller-supplied executor with identical
+  results. The engine still never creates threads of its own.
+- **`MatchDiagnostics` wired** (§4 noted it existed with zero runtime references):
+  `LoadedRuleset.explain(input)` evaluates like `evaluate` and attaches the winning rule's
+  non-blank conditions rendered as `"NAME OPERATOR operand"`, decoded from the artifact via
+  a new `ColumnDecoder.describeOperand`.
+- **Test-column evaluation option** (PRD FR2's "optionally exclude"):
+  `LoadOptions.withIncludeTestColumns(true)` makes `TEST_` input columns participate in
+  matching and `TEST_` output columns surface in `outputs()` — the mode for running a
+  table's embedded expectations against real inputs. Wiring this exposed and fixed a bug:
+  input coercion skipped test columns unconditionally, so included test inputs arrived as
+  "absent".
+- **Validator completeness** (§4's validation gaps): typed operand checks for every column
+  type (including inside ranges and sets), duplicate-`RULE_ID` detection (memory-bounded,
+  reports truncation), blank/non-integer `PRIORITY`, inverted ranges (min > max), sets over
+  the 65,535 limit, sub-microsecond timestamps, and a 1,000-issue cap with a final note.
+
+Still deliberately out of scope, per the project's own plan: JSON and database sources
+(phase 2+), `BETWEEN_*` indexing, and overlap/gap analysis in the validator. Compile-time
+index persistence remains the one open optimization (§11).
